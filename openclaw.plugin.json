@@ -1,0 +1,10 @@
+{
+  "id": "zapry",
+  "channels": ["zapry"],
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
