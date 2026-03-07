@@ -62,6 +62,14 @@ export class ZapryApiClient {
     return this.post("sendAudio", { chat_id: chatId, audio });
   }
 
+  async sendVoice(chatId: string, voice: string) {
+    return this.post("sendVoice", { chat_id: chatId, voice });
+  }
+
+  async sendAnimation(chatId: string, animation: string) {
+    return this.post("sendAnimation", { chat_id: chatId, animation });
+  }
+
   async deleteMessage(chatId: string, messageId: string) {
     return this.post("deleteMessage", { chat_id: chatId, message_id: messageId });
   }
@@ -94,16 +102,22 @@ export class ZapryApiClient {
 
   // ── Commands ──
 
-  async setMyCommands(commands: Array<{ command: string; description: string }>) {
-    return this.post("setMyCommands", { commands: JSON.stringify(commands) });
+  async setMyCommands(
+    commands: unknown,
+    languageCode?: string,
+  ) {
+    return this.post("setMyCommands", {
+      commands: typeof commands === "string" ? commands : JSON.stringify(commands),
+      language_code: languageCode,
+    });
   }
 
-  async getMyCommands() {
-    return this.post("getMyCommands");
+  async getMyCommands(languageCode?: string) {
+    return this.post("getMyCommands", { language_code: languageCode });
   }
 
-  async deleteMyCommands() {
-    return this.post("deleteMyCommands");
+  async deleteMyCommands(languageCode?: string) {
+    return this.post("deleteMyCommands", { language_code: languageCode });
   }
 
   // ── Files ──
@@ -162,6 +176,14 @@ export class ZapryApiClient {
     return this.post("getTrendingPosts", { page, page_size: pageSize });
   }
 
+  async getLatestPosts(page?: number, pageSize?: number) {
+    return this.post("getLatestPosts", { page, page_size: pageSize });
+  }
+
+  async getMyPosts(page?: number, pageSize?: number) {
+    return this.post("getMyPosts", { page, page_size: pageSize });
+  }
+
   async searchPosts(keyword: string, page?: number, pageSize?: number) {
     return this.post("searchPosts", { keyword, page, page_size: pageSize });
   }
@@ -172,6 +194,10 @@ export class ZapryApiClient {
 
   async getWalletAddress(userId: string) {
     return this.post("getWalletAddress", { user_id: userId });
+  }
+
+  async getUserProfilePhotos(userId?: string) {
+    return this.post("getUserProfilePhotos", { user_id: userId });
   }
 
   // ── Feed ──

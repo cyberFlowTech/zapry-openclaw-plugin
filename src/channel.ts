@@ -85,12 +85,15 @@ export const zapryPlugin = {
 
   actions: {
     listActions: () => [
-      "send", "delete",
+      "send", "send-audio", "send-voice", "send-animation", "delete", "answer-callback-query",
+      "get-file", "set-my-commands", "get-my-commands", "delete-my-commands",
+      "get-updates", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
       "ban", "unban", "mute", "unmute", "kick",
       "set-chat-title", "set-chat-description",
       "get-chat-admins", "get-chat-member", "get-chat-member-count",
       "create-post", "comment-post", "like-post", "share-post",
-      "get-trending", "search-posts", "get-communities",
+      "get-trending", "get-latest-posts", "get-my-posts", "search-posts", "get-communities",
+      "get-wallet-address", "get-user-profile-photos",
       "create-club", "post-to-club", "update-club",
       "get-me", "set-name", "set-description",
       "set-wallet-address", "set-profile", "get-profile",
@@ -141,6 +144,8 @@ export const zapryPlugin = {
       lastStartAt: null,
       lastStopAt: null,
       lastError: null,
+      lastInboundAt: null,
+      lastOutboundAt: null,
     },
     probeAccount: async ({ account, timeoutMs }: any) => {
       try {
@@ -161,6 +166,8 @@ export const zapryPlugin = {
       lastStartAt: runtime?.lastStartAt ?? null,
       lastStopAt: runtime?.lastStopAt ?? null,
       lastError: runtime?.lastError ?? null,
+      lastInboundAt: runtime?.lastInboundAt ?? null,
+      lastOutboundAt: runtime?.lastOutboundAt ?? null,
       probe,
     }),
   },
@@ -184,8 +191,16 @@ export const zapryPlugin = {
 
       return monitorZapryProvider({
         account,
+        cfg: ctx.cfg,
+        runtime: ctx.runtime,
         abortSignal: ctx.abortSignal,
         onUpdate: ctx.onUpdate,
+        onMessage: ctx.onMessage,
+        statusSink: (patch) => {
+          if (typeof ctx.setStatus === "function") {
+            ctx.setStatus({ accountId: ctx.accountId, ...patch });
+          }
+        },
         log: ctx.log,
       });
     },
