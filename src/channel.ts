@@ -85,23 +85,23 @@ export const zapryPlugin = {
 
   actions: {
     listActions: () => [
-      "send", "send-audio", "send-voice", "send-animation", "delete", "answer-callback-query",
-      "get-file", "set-my-commands", "get-my-commands", "delete-my-commands",
-      "get-updates", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
-      "ban", "unban", "mute", "unmute", "kick",
-      "set-chat-title", "set-chat-description",
-      "get-chat-admins", "get-chat-member", "get-chat-member-count",
+      "send-message", "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation",
+      "delete-message", "answer-callback-query",
+      "get-updates", "get-file", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
+      "set-my-commands", "get-my-commands", "delete-my-commands",
+      "set-my-soul", "get-my-soul", "set-my-skills", "get-my-skills", "get-my-profile",
+      "get-my-groups", "get-my-chats", "get-chat-member", "get-chat-member-count", "get-chat-administrators",
+      "mute-chat-member", "kick-chat-member", "set-chat-title", "set-chat-description",
+      "get-me", "get-user-profile-photos", "set-my-wallet-address", "set-my-friend-verify",
+      "get-my-contacts", "get-my-friend-requests", "set-my-name", "set-my-description",
+      "get-trending-posts", "get-latest-posts", "get-my-posts", "search-posts",
       "create-post", "comment-post", "like-post", "share-post",
-      "get-trending", "get-latest-posts", "get-my-posts", "search-posts", "get-communities",
-      "get-wallet-address", "get-user-profile-photos",
-      "create-club", "post-to-club", "update-club",
-      "get-me", "set-name", "set-description",
-      "set-wallet-address", "set-profile", "get-profile",
+      "get-my-clubs", "create-club", "post-to-club", "update-club",
     ],
     extractToolSend: (ctx: any) => {
-      if (ctx.action === "send") {
+      if (ctx.action === "send-message") {
         return {
-          to: ctx.params?.to ?? ctx.params?.chatId,
+          to: ctx.params?.to ?? ctx.params?.chatId ?? ctx.params?.chat_id,
           text: ctx.params?.message ?? ctx.params?.text,
         };
       }
@@ -151,7 +151,14 @@ export const zapryPlugin = {
       try {
         const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
         const resp = await client.getMe();
-        return { ok: resp.ok, bot: resp.result };
+        if (!resp.ok) {
+          return {
+            ok: false,
+            errorCode: resp.error_code,
+            error: resp.description ?? "getMe failed",
+          };
+        }
+        return { ok: true, bot: resp.result };
       } catch (err) {
         return { ok: false, error: String(err) };
       }
@@ -184,6 +191,11 @@ export const zapryPlugin = {
           const bot = probe.result as any;
           ctx.log?.info(`[${account.accountId}] bot: ${bot?.name ?? bot?.username ?? "unknown"}`);
           ctx.setStatus?.({ accountId: account.accountId, bot });
+        } else {
+          ctx.log?.warn(
+            `[${account.accountId}] getMe probe failed: ` +
+              `${probe.error_code ?? "unknown"}:${probe.description ?? "unknown"}`,
+          );
         }
       } catch {
         // probe is best-effort

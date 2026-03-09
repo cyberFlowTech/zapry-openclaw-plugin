@@ -1,20 +1,36 @@
 import type { ZapryApiResponse } from "./types.js";
 
+type SetMySoulPayload = {
+  soulMd: string;
+  version?: string;
+  source?: string;
+  agentKey?: string;
+};
+
+type SetMySkillsPayload = {
+  skills: Array<Record<string, unknown>>;
+  version?: string;
+  source?: string;
+  agentKey?: string;
+};
+
 export class ZapryApiClient {
   constructor(
     private baseUrl: string,
     private botToken: string,
   ) {}
 
-  private async post<T = unknown>(
-    method: string,
-    body?: Record<string, unknown>,
-  ): Promise<ZapryApiResponse<T>> {
-    const url = `${this.baseUrl}/${this.botToken}/${method}`;
+  private async request<T = unknown>(opts: {
+    methodPath: string;
+    method: "GET" | "POST";
+    body?: Record<string, unknown>;
+  }): Promise<ZapryApiResponse<T>> {
+    const { methodPath, method, body } = opts;
+    const url = `${this.baseUrl}/${this.botToken}/${methodPath}`;
     const resp = await fetch(url, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : "{}",
+      body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
     if (!resp.ok) {
       return {
@@ -24,6 +40,17 @@ export class ZapryApiClient {
       };
     }
     return (await resp.json()) as ZapryApiResponse<T>;
+  }
+
+  private async post<T = unknown>(
+    methodPath: string,
+    body?: Record<string, unknown>,
+  ): Promise<ZapryApiResponse<T>> {
+    return this.request({ methodPath, method: "POST", body });
+  }
+
+  private async get<T = unknown>(methodPath: string): Promise<ZapryApiResponse<T>> {
+    return this.request({ methodPath, method: "GET" });
   }
 
   // ── Messaging ──
@@ -46,12 +73,12 @@ export class ZapryApiClient {
     });
   }
 
-  async sendPhoto(chatId: string, photo: string, opts?: { replyMarkup?: unknown }) {
-    return this.post("sendPhoto", { chat_id: chatId, photo, reply_markup: opts?.replyMarkup });
+  async sendPhoto(chatId: string, photo: string) {
+    return this.post("sendPhoto", { chat_id: chatId, photo });
   }
 
-  async sendVideo(chatId: string, video: string, opts?: { replyMarkup?: unknown }) {
-    return this.post("sendVideo", { chat_id: chatId, video, reply_markup: opts?.replyMarkup });
+  async sendVideo(chatId: string, video: string) {
+    return this.post("sendVideo", { chat_id: chatId, video });
   }
 
   async sendDocument(chatId: string, document: string) {
@@ -74,18 +101,30 @@ export class ZapryApiClient {
     return this.post("deleteMessage", { chat_id: chatId, message_id: messageId });
   }
 
-  async answerCallbackQuery(callbackQueryId: string, text?: string, showAlert?: boolean) {
+  async answerCallbackQuery(
+    chatId: string,
+    callbackQueryId: string,
+    opts?: {
+      text?: string;
+      showAlert?: boolean;
+    },
+  ) {
     return this.post("answerCallbackQuery", {
+      chat_id: chatId,
       callback_query_id: callbackQueryId,
-      text,
-      show_alert: showAlert,
+      text: opts?.text,
+      show_alert: opts?.showAlert,
     });
   }
 
-  // ── Updates ──
+  // ── Receive / Webhook ──
 
   async getUpdates(offset?: number, limit?: number, timeout?: number) {
     return this.post("getUpdates", { offset, limit, timeout });
+  }
+
+  async getFile(fileId: string) {
+    return this.post("getFile", { file_id: fileId });
   }
 
   async setWebhook(url: string) {
@@ -100,33 +139,56 @@ export class ZapryApiClient {
     return this.post("deleteWebhook");
   }
 
-  // ── Commands ──
+  // ── Skills & Commands ──
 
-  async setMyCommands(
-    commands: unknown,
-    languageCode?: string,
-  ) {
+  async setMyCommands(commands: string, languageCode?: string) {
     return this.post("setMyCommands", {
-      commands: typeof commands === "string" ? commands : JSON.stringify(commands),
+      commands,
       language_code: languageCode,
     });
   }
 
   async getMyCommands(languageCode?: string) {
-    return this.post("getMyCommands", { language_code: languageCode });
+    return this.post("getMyCommands", {
+      language_code: languageCode,
+    });
   }
 
   async deleteMyCommands(languageCode?: string) {
-    return this.post("deleteMyCommands", { language_code: languageCode });
+    return this.post("deleteMyCommands", {
+      language_code: languageCode,
+    });
   }
 
-  // ── Files ──
-
-  async getFile(fileId: string) {
-    return this.post("getFile", { file_id: fileId });
+  async setMySoul(payload: SetMySoulPayload) {
+    return this.post("setMySoul", payload);
   }
 
-  // ── Group Query ──
+  async getMySoul() {
+    return this.get("getMySoul");
+  }
+
+  async setMySkills(payload: SetMySkillsPayload) {
+    return this.post("setMySkills", payload);
+  }
+
+  async getMySkills() {
+    return this.get("getMySkills");
+  }
+
+  async getMyProfile() {
+    return this.post("getMyProfile");
+  }
+
+  // ── Group Query & Moderation ──
+
+  async getMyGroups(page?: number, pageSize?: number) {
+    return this.post("getMyGroups", { page, page_size: pageSize });
+  }
+
+  async getMyChats(page?: number, pageSize?: number) {
+    return this.post("getMyChats", { page, page_size: pageSize });
+  }
 
   async getChatMember(chatId: string, userId: string) {
     return this.post("getChatMember", { chat_id: chatId, user_id: userId });
@@ -140,22 +202,8 @@ export class ZapryApiClient {
     return this.post("getChatAdministrators", { chat_id: chatId });
   }
 
-  // ── Group Management ──
-
-  async banChatMember(chatId: string, userId: string) {
-    return this.post("banChatMember", { chat_id: chatId, user_id: userId });
-  }
-
-  async unbanChatMember(chatId: string, userId: string) {
-    return this.post("unbanChatMember", { chat_id: chatId, user_id: userId });
-  }
-
-  async restrictChatMember(chatId: string, userId: string, mute: boolean) {
-    return this.post("restrictChatMember", {
-      chat_id: chatId,
-      user_id: userId,
-      permissions: { can_send_messages: !mute },
-    });
+  async muteChatMember(chatId: string, userId: string, mute: boolean) {
+    return this.post("muteChatMember", { chat_id: chatId, user_id: userId, mute });
   }
 
   async kickChatMember(chatId: string, userId: string) {
@@ -170,7 +218,41 @@ export class ZapryApiClient {
     return this.post("setChatDescription", { chat_id: chatId, description });
   }
 
-  // ── Public Data ──
+  // ── Agent Self Management ──
+
+  async getMe() {
+    return this.get("getMe");
+  }
+
+  async getUserProfilePhotos(userId?: string) {
+    return this.post("getUserProfilePhotos", { user_id: userId });
+  }
+
+  async setMyWalletAddress(walletAddress: string) {
+    return this.post("setMyWalletAddress", { wallet_address: walletAddress });
+  }
+
+  async setMyFriendVerify(needVerify: boolean) {
+    return this.post("setMyFriendVerify", { need_verify: needVerify });
+  }
+
+  async getMyContacts(page?: number, pageSize?: number) {
+    return this.post("getMyContacts", { page, page_size: pageSize });
+  }
+
+  async getMyFriendRequests(pendingOnly?: boolean) {
+    return this.post("getMyFriendRequests", { pending_only: pendingOnly });
+  }
+
+  async setMyName(name: string) {
+    return this.post("setMyName", { name });
+  }
+
+  async setMyDescription(description: string) {
+    return this.post("setMyDescription", { description });
+  }
+
+  // ── Feed ──
 
   async getTrendingPosts(page?: number, pageSize?: number) {
     return this.post("getTrendingPosts", { page, page_size: pageSize });
@@ -188,20 +270,6 @@ export class ZapryApiClient {
     return this.post("searchPosts", { keyword, page, page_size: pageSize });
   }
 
-  async getPublicCommunities(page?: number, pageSize?: number) {
-    return this.post("getPublicCommunities", { page, page_size: pageSize });
-  }
-
-  async getWalletAddress(userId: string) {
-    return this.post("getWalletAddress", { user_id: userId });
-  }
-
-  async getUserProfilePhotos(userId?: string) {
-    return this.post("getUserProfilePhotos", { user_id: userId });
-  }
-
-  // ── Feed ──
-
   async createPost(content: string, images?: string[]) {
     return this.post("createPost", { content, images });
   }
@@ -218,7 +286,11 @@ export class ZapryApiClient {
     return this.post("sharePost", { dynamic_id: dynamicId });
   }
 
-  // ── Clubs ──
+  // ── Club ──
+
+  async getMyClubs(page?: number, pageSize?: number) {
+    return this.post("getMyClubs", { page, page_size: pageSize });
+  }
 
   async createClub(name: string, desc?: string, avatar?: string) {
     return this.post("createClub", { name, desc, avatar });
@@ -230,31 +302,5 @@ export class ZapryApiClient {
 
   async updateClub(clubId: number, name?: string, desc?: string, avatar?: string) {
     return this.post("updateClub", { club_id: clubId, name, desc, avatar });
-  }
-
-  // ── Bot Self-Management ──
-
-  async getMe() {
-    return this.post("getMe");
-  }
-
-  async setMyName(name: string) {
-    return this.post("setMyName", { name });
-  }
-
-  async setMyDescription(description: string) {
-    return this.post("setMyDescription", { description });
-  }
-
-  async setMyWalletAddress(walletAddress: string) {
-    return this.post("setMyWalletAddress", { wallet_address: walletAddress });
-  }
-
-  async setMyProfile(profileSource: unknown) {
-    return this.post("setMyProfile", { profileSource: profileSource as Record<string, unknown> });
-  }
-
-  async getMyProfile() {
-    return this.post("getMyProfile");
   }
 }
