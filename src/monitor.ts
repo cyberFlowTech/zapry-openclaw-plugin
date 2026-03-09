@@ -73,22 +73,36 @@ async function startPollingMode(ctx: MonitorContext): Promise<void> {
 
   let offset = 0;
   let warnedMissingInboundHandler = false;
+  let lastPollingApiError = "";
   while (!abortSignal?.aborted) {
     try {
       const resp = await client.getUpdates(offset, 100, 30);
-      if (resp.ok && Array.isArray(resp.result)) {
-        for (const update of resp.result) {
-          const handled = await dispatchInboundUpdate(ctx, update);
-          if (!handled && !warnedMissingInboundHandler) {
-            warnedMissingInboundHandler = true;
-            log?.warn(
-              `[${account.accountId}] inbound update received but no compatible handler is available`,
-            );
-          }
-          const updateId = (update as any).update_id;
-          if (typeof updateId === "number" && updateId >= offset) {
-            offset = updateId + 1;
-          }
+      if (!resp.ok) {
+        const errorSig = `${resp.error_code ?? "unknown"}:${resp.description ?? "unknown"}`;
+        if (errorSig !== lastPollingApiError) {
+          lastPollingApiError = errorSig;
+          log?.warn(`[${account.accountId}] getUpdates failed: ${errorSig}`);
+        }
+        await sleep(3000);
+        continue;
+      }
+
+      lastPollingApiError = "";
+      if (!Array.isArray(resp.result)) {
+        continue;
+      }
+
+      for (const update of resp.result) {
+        const handled = await dispatchInboundUpdate(ctx, update);
+        if (!handled && !warnedMissingInboundHandler) {
+          warnedMissingInboundHandler = true;
+          log?.warn(
+            `[${account.accountId}] inbound update received but no compatible handler is available`,
+          );
+        }
+        const updateId = (update as any).update_id;
+        if (typeof updateId === "number" && updateId >= offset) {
+          offset = updateId + 1;
         }
       }
     } catch (err) {
