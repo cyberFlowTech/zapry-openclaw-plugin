@@ -1,5 +1,7 @@
 import { ZapryApiClient } from "./api-client.js";
 import type { ResolvedZapryAccount } from "./types.js";
+import { readFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 
 export type ActionContext = {
   action: string;
@@ -15,6 +17,7 @@ export type ActionResult = {
 };
 
 const ACTION_ALIASES: Record<string, string> = {
+  send: "send",
   sendmessage: "send-message",
   sendphoto: "send-photo",
   sendvideo: "send-video",
@@ -77,6 +80,14 @@ const ACTION_ALIASES: Record<string, string> = {
   updateclub: "update-club",
 };
 
+type SendMediaAction =
+  | "send-photo"
+  | "send-video"
+  | "send-document"
+  | "send-audio"
+  | "send-voice"
+  | "send-animation";
+
 export async function handleZapryAction(ctx: ActionContext): Promise<ActionResult> {
   const { action, account, params } = ctx;
   const normalizedAction = normalizeActionName(action);
@@ -89,6 +100,8 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
 
   switch (normalizedAction) {
     // ── Messaging ──
+    case "send":
+      return handleCoreSendCompat(client, normalized);
     case "send-message":
       return wrap(
         client.sendMessage(normalized.chat_id, normalized.text, {
@@ -242,6 +255,239 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
 
     default:
       return { ok: false, error: `unknown zapry action: ${action}` };
+  }
+}
+
+async function handleCoreSendCompat(
+  client: ZapryApiClient,
+  params: Record<string, any>,
+): Promise<ActionResult> {
+  if (!hasRequiredValue(params.chat_id)) {
+    return { ok: false, error: "missing required params for send: chat_id" };
+  }
+  const chatId = String(params.chat_id).trim();
+  const mediaSource = pickCoreSendMediaSource(params);
+  if (mediaSource) {
+    const resolvedMediaSource = await materializeSendMediaSource(mediaSource);
+    const mediaAction = inferCoreSendMediaAction(resolvedMediaSource, params);
+    const mediaField = mediaFieldNameForAction(mediaAction);
+    const mediaErr = validateMediaSource(resolvedMediaSource, mediaField);
+    if (mediaErr) {
+      return { ok: false, error: mediaErr };
+    }
+
+    switch (mediaAction) {
+      case "send-photo":
+        return wrap(client.sendPhoto(chatId, resolvedMediaSource));
+      case "send-video":
+        return wrap(client.sendVideo(chatId, resolvedMediaSource));
+      case "send-document":
+        return wrap(client.sendDocument(chatId, resolvedMediaSource));
+      case "send-audio":
+        return wrap(client.sendAudio(chatId, resolvedMediaSource));
+      case "send-voice":
+        return wrap(client.sendVoice(chatId, resolvedMediaSource));
+      case "send-animation":
+        return wrap(client.sendAnimation(chatId, resolvedMediaSource));
+    }
+  }
+
+  if (!hasRequiredValue(params.text)) {
+    return { ok: false, error: "missing required params for send: text or media" };
+  }
+
+  return wrap(
+    client.sendMessage(chatId, String(params.text), {
+      replyToMessageId: params.reply_to_message_id,
+      messageThreadId: params.message_thread_id,
+      replyMarkup: params.reply_markup,
+    }),
+  );
+}
+
+function pickCoreSendMediaSource(params: Record<string, any>): string | null {
+  const direct = pickFirst(params, [
+    "photo",
+    "video",
+    "document",
+    "audio",
+    "voice",
+    "animation",
+    "media",
+    "media_url",
+    "mediaUrl",
+  ]);
+  if (isNonEmptyString(direct)) {
+    return direct.trim();
+  }
+
+  const mediaUrls = pickFirst(params, ["media_urls", "mediaUrls"]);
+  if (Array.isArray(mediaUrls)) {
+    for (const item of mediaUrls) {
+      if (isNonEmptyString(item)) {
+        return item.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+async function materializeSendMediaSource(mediaSource: string): Promise<string> {
+  const source = mediaSource.trim();
+  if (
+    /^data:[^,]+,.+/i.test(source) ||
+    source.startsWith("/_temp/media/") ||
+    /^https?:\/\/[^/\s]+\/_temp\/media\//i.test(source)
+  ) {
+    return source;
+  }
+
+  const localPath = toLocalMediaPath(source);
+  if (!localPath) {
+    return source;
+  }
+
+  try {
+    const binary = await readFile(localPath);
+    const mime = inferMimeTypeFromPath(localPath);
+    return `data:${mime};base64,${binary.toString("base64")}`;
+  } catch {
+    return source;
+  }
+}
+
+function toLocalMediaPath(source: string): string | null {
+  if (!source) {
+    return null;
+  }
+  if (/^https?:\/\//i.test(source) || source.startsWith("data:")) {
+    return null;
+  }
+  if (source.startsWith("file://")) {
+    try {
+      const url = new URL(source);
+      return decodeURIComponent(url.pathname);
+    } catch {
+      return null;
+    }
+  }
+  if (source.startsWith("/")) {
+    return source;
+  }
+  return resolvePath(process.cwd(), source);
+}
+
+function inferMimeTypeFromPath(filePath: string): string {
+  const lower = filePath.trim().toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  if (lower.endsWith(".heic")) return "image/heic";
+  if (lower.endsWith(".heif")) return "image/heif";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".m4v")) return "video/mp4";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  if (lower.endsWith(".aac")) return "audio/aac";
+  if (lower.endsWith(".opus")) return "audio/opus";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".txt")) return "text/plain";
+  return "application/octet-stream";
+}
+
+function inferCoreSendMediaAction(
+  mediaSource: string,
+  params: Record<string, any>,
+): SendMediaAction {
+  const mediaType = normalizeMediaType(pickFirst(params, ["media_type", "mediaType", "type"]));
+  if (mediaType) {
+    return mediaType;
+  }
+
+  const source = mediaSource.trim().toLowerCase();
+  const dataUriMatch = /^data:([^;,]+)[;,]/i.exec(source);
+  if (dataUriMatch) {
+    const mime = dataUriMatch[1];
+    if (mime.startsWith("image/")) {
+      return mime === "image/gif" ? "send-animation" : "send-photo";
+    }
+    if (mime.startsWith("video/")) {
+      return "send-video";
+    }
+    if (mime.startsWith("audio/")) {
+      return "send-audio";
+    }
+    return "send-document";
+  }
+
+  const cleanSource = source.split("?")[0].split("#")[0];
+  const dotIndex = cleanSource.lastIndexOf(".");
+  const ext = dotIndex >= 0 ? cleanSource.slice(dotIndex + 1) : "";
+  if (["jpg", "jpeg", "png", "webp", "bmp", "heic", "heif"].includes(ext)) {
+    return "send-photo";
+  }
+  if (["gif"].includes(ext)) {
+    return "send-animation";
+  }
+  if (["mp4", "mov", "avi", "webm", "m4v", "mkv"].includes(ext)) {
+    return "send-video";
+  }
+  if (["mp3", "m4a", "aac", "wav", "flac", "ogg"].includes(ext)) {
+    return "send-audio";
+  }
+  if (["opus"].includes(ext)) {
+    return "send-voice";
+  }
+  return "send-document";
+}
+
+function normalizeMediaType(value: unknown): SendMediaAction | null {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+  const mediaType = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (["image", "photo", "send-photo"].includes(mediaType)) {
+    return "send-photo";
+  }
+  if (["video", "movie", "send-video"].includes(mediaType)) {
+    return "send-video";
+  }
+  if (["file", "doc", "document", "send-document"].includes(mediaType)) {
+    return "send-document";
+  }
+  if (["audio", "music", "send-audio"].includes(mediaType)) {
+    return "send-audio";
+  }
+  if (["voice", "voice-note", "send-voice"].includes(mediaType)) {
+    return "send-voice";
+  }
+  if (["animation", "gif", "send-animation"].includes(mediaType)) {
+    return "send-animation";
+  }
+  return null;
+}
+
+function mediaFieldNameForAction(action: SendMediaAction): string {
+  switch (action) {
+    case "send-photo":
+      return "photo";
+    case "send-video":
+      return "video";
+    case "send-document":
+      return "document";
+    case "send-audio":
+      return "audio";
+    case "send-voice":
+      return "voice";
+    case "send-animation":
+      return "animation";
   }
 }
 
