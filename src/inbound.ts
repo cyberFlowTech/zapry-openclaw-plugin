@@ -47,6 +47,8 @@ type ParsedInboundMediaItem = {
   stagedPath?: string;
   stagedMimeType?: string;
   stageError?: string;
+  transcript?: string;
+  transcriptError?: string;
 };
 
 type ParsedInboundMessage = {
@@ -75,6 +77,7 @@ type ResolvedInboundFile = {
 
 const INBOUND_FILE_RESOLVE_TIMEOUT_MS = 8000;
 const INBOUND_MEDIA_STAGE_TIMEOUT_MS = 15000;
+const INBOUND_AUDIO_TRANSCRIBE_TIMEOUT_MS = 20000;
 const INBOUND_MEDIA_MAX_BYTES_BY_KIND: Record<ParsedInboundMediaKind, number> = {
   photo: 25 * 1024 * 1024,
   video: 100 * 1024 * 1024,
@@ -156,9 +159,43 @@ function describeMediaKinds(mediaItems: ParsedInboundMediaItem[]): string {
   return labels.join("、");
 }
 
-function resolveCommandBody(sourceText: string | undefined, mediaItems: ParsedInboundMediaItem[]): string {
+function isAudioLikeMedia(item: ParsedInboundMediaItem): boolean {
+  return item.kind === "audio" || item.kind === "voice";
+}
+
+function isExplicitTranscriptRequest(text: string | undefined): boolean {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "转写",
+    "转文字",
+    "转成文字",
+    "听写",
+    "逐字",
+    "逐字稿",
+    "原话",
+    "原文",
+    "我说了什么",
+    "我发送了什么语音",
+    "给我转文字",
+    "帮我转文字",
+    "transcribe",
+    "transcript",
+    "verbatim",
+  ].some((token) => normalized.includes(token));
+}
+
+function resolveCommandBody(
+  sourceText: string | undefined,
+  mediaItems: ParsedInboundMediaItem[],
+  transcript?: string,
+): string {
   const hasMedia = mediaItems.length > 0;
   const hasStagedMedia = mediaItems.some((item) => Boolean(item.stagedPath));
+  const hasAudioLikeMedia = mediaItems.some((item) => isAudioLikeMedia(item));
+  const hasOnlyAudioLikeMedia = mediaItems.length > 0 && mediaItems.every((item) => isAudioLikeMedia(item));
   const stageErrors = mediaItems
     .map((item) => item.stageError)
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
@@ -172,13 +209,29 @@ function resolveCommandBody(sourceText: string | undefined, mediaItems: ParsedIn
   }
 
   const normalizedText = sourceText?.trim();
+  const transcriptRequested = isExplicitTranscriptRequest(normalizedText);
   if (normalizedText) {
+    if (hasAudioLikeMedia) {
+      if (transcript?.trim()) {
+        if (transcriptRequested) {
+          return `用户要求：${normalizedText}\n当前轮真实转写文本：${transcript}\n用户明确要求转写/转文字时，优先直接输出上述真实转写文本；禁止根据历史上下文或主观猜测改写内容。`;
+        }
+        return `用户要求：${normalizedText}\n当前轮真实转写文本（仅供理解，不要默认回显给用户）：${transcript}\n请把该转写视为用户本轮真实语音输入，直接回答用户意图；除非用户明确要求转写/逐字稿，否则不要回显转写文本。`;
+      }
+      return `${normalizedText}\n当前轮语音/音频尚未拿到真实转写文本。禁止根据用户追问文本、历史上下文或主观猜测编造语音内容；只能明确说明当前无法完成真实转写。`;
+    }
     return normalizedText;
   }
   if (!mediaItems.length) {
     return "";
   }
   const mediaKindText = describeMediaKinds(mediaItems) || "媒体";
+  if (hasOnlyAudioLikeMedia) {
+    if (transcript?.trim()) {
+      return `请直接处理这条${mediaKindText}消息。当前轮真实转写文本（仅供理解，不要默认回显给用户）：${transcript}\n把这段转写视为用户本轮真实输入，直接像普通聊天一样回复其意图；除非用户明确要求转写/逐字稿，否则不要输出转写文本本身。`;
+    }
+    return `请直接处理这条${mediaKindText}消息。当前轮还没有真实转写文本，禁止根据历史上下文或主观猜测编造音频内容；只能明确说明当前无法完成真实转写，并请求用户重发。`;
+  }
   return `请直接查看并分析这条${mediaKindText}消息，优先使用已提供的 file_id 与已附加媒体内容，不要先询问是否需要解析。`;
 }
 
@@ -257,6 +310,23 @@ function sanitizeMediaItemsForAgent(mediaItems: ParsedInboundMediaItem[]): Parse
   }));
 }
 
+function resolveInboundSttRuntime(runtime: any):
+  | {
+      transcribeAudioFile: (params: {
+        filePath: string;
+        cfg: any;
+        agentDir?: string;
+        mime?: string;
+      }) => Promise<{ text?: string }>;
+    }
+  | null {
+  const transcribeAudioFile = runtime?.stt?.transcribeAudioFile;
+  if (typeof transcribeAudioFile !== "function") {
+    return null;
+  }
+  return { transcribeAudioFile };
+}
+
 async function stageInboundMediaItems(
   runtime: any,
   mediaItems: ParsedInboundMediaItem[],
@@ -328,6 +398,73 @@ async function stageInboundMediaItems(
       }
     }),
   );
+}
+
+async function transcribeInboundAudioItems(
+  runtime: any,
+  cfg: any,
+  mediaItems: ParsedInboundMediaItem[],
+  log?: RuntimeLog,
+): Promise<{ mediaItems: ParsedInboundMediaItem[]; transcript?: string }> {
+  if (!mediaItems.length) {
+    return { mediaItems };
+  }
+  const sttRuntime = resolveInboundSttRuntime(runtime);
+  if (!sttRuntime) {
+    return { mediaItems };
+  }
+
+  const updated = await Promise.all(
+    mediaItems.map(async (item) => {
+      if (!isAudioLikeMedia(item) || !item.stagedPath || item.stageError) {
+        return item;
+      }
+      try {
+        const result = await withTimeout(
+          sttRuntime.transcribeAudioFile({
+            filePath: item.stagedPath,
+            cfg,
+            mime: item.stagedMimeType ?? item.mimeType ?? item.resolvedFile?.contentType,
+          }),
+          INBOUND_AUDIO_TRANSCRIBE_TIMEOUT_MS,
+          `transcribe inbound audio ${item.fileId ?? item.kind}`,
+        );
+        const transcript = result?.text?.trim();
+        if (!transcript) {
+          return {
+            ...item,
+            transcriptError: "empty transcript",
+          };
+        }
+        return {
+          ...item,
+          transcript,
+          transcriptError: undefined,
+        };
+      } catch (error) {
+        const transcriptError = String(error);
+        log?.warn?.(`[zapry] transcribe inbound audio failed for ${item.fileId ?? item.kind}: ${transcriptError}`);
+        return {
+          ...item,
+          transcriptError,
+        };
+      }
+    }),
+  );
+
+  const transcriptItems = updated.filter(
+    (item): item is ParsedInboundMediaItem & { transcript: string } =>
+      isAudioLikeMedia(item) && typeof item.transcript === "string" && item.transcript.trim().length > 0,
+  );
+  if (!transcriptItems.length) {
+    return { mediaItems: updated };
+  }
+
+  const transcript =
+    transcriptItems.length === 1
+      ? transcriptItems[0].transcript
+      : transcriptItems.map((item, index) => `音频${index + 1}：\n${item.transcript}`).join("\n\n");
+  return { mediaItems: updated, transcript };
 }
 
 function parseMediaObject(kind: ParsedInboundMediaKind, raw: unknown): ParsedInboundMediaItem | null {
@@ -435,8 +572,13 @@ function summarizeMediaItem(item: ParsedInboundMediaItem): string {
   return parts.join(" | ");
 }
 
-function buildInboundBody(sourceText: string | undefined, mediaItems: ParsedInboundMediaItem[]): string {
+function buildInboundBody(
+  sourceText: string | undefined,
+  mediaItems: ParsedInboundMediaItem[],
+  transcript?: string,
+): string {
   const normalizedText = sourceText?.trim();
+  const transcriptRequested = isExplicitTranscriptRequest(normalizedText);
   if (!mediaItems.length) {
     return normalizedText ?? "";
   }
@@ -460,6 +602,10 @@ function buildInboundBody(sourceText: string | undefined, mediaItems: ParsedInbo
   }
   lines.push("- 如果结构化数据里已经有 file_id，优先把它视为主读取链路，不要依赖兼容 URL。");
   lines.push("- 插件会在内部完成 get-file 与媒体下载；模型不应再把 URL 当成主链路。");
+  if (mediaItems.length > 0 && mediaItems.every((item) => isAudioLikeMedia(item))) {
+    lines.push("- 若这是纯语音/音频消息，默认本轮直接输出转写；若还能总结，再补 1-3 条要点。");
+    lines.push("- 禁止只回复“我已收到”“我现在开始转写”“稍后给你结果”之类进度说明。");
+  }
   lines.push("- 只有在媒体本体下载失败或权限失败时，才向用户说明并请求重试。", "");
   if (!hasStagedMedia && stageErrors.length > 0) {
     lines.push("[媒体下载状态]");
@@ -467,6 +613,45 @@ function buildInboundBody(sourceText: string | undefined, mediaItems: ParsedInbo
     lines.push("- 只允许向用户说明当前无法读取该媒体，并建议稍后重试或改用文件/原图方式发送。");
     lines.push("- 最近错误：");
     for (const err of stageErrors.slice(0, 3)) {
+      lines.push(`  - ${err}`);
+    }
+    lines.push("");
+  }
+  const transcriptItems = mediaItems.filter(
+    (item): item is ParsedInboundMediaItem & { transcript: string } =>
+      isAudioLikeMedia(item) && typeof item.transcript === "string" && item.transcript.trim().length > 0,
+  );
+  const transcriptErrors = mediaItems
+    .filter((item) => isAudioLikeMedia(item) && typeof item.transcriptError === "string" && item.transcriptError.trim().length > 0)
+    .map((item) => item.transcriptError as string);
+  if (transcriptItems.length > 0) {
+    if (transcriptRequested) {
+      lines.push("[语音转写结果]");
+      if (transcript?.trim()) {
+        lines.push(transcript.trim());
+      } else {
+        for (const [index, item] of transcriptItems.entries()) {
+          lines.push(`- 音频${index + 1}: ${item.transcript}`);
+        }
+      }
+      lines.push("- 用户明确要求转写/转文字时，可以直接输出上述真实转写文本。", "");
+    } else {
+      lines.push("[内部语音理解]");
+      lines.push("- 以下是真实转写，仅供理解用户意图，默认不要回显给用户：");
+      if (transcript?.trim()) {
+        lines.push(transcript.trim());
+      } else {
+        for (const [index, item] of transcriptItems.entries()) {
+          lines.push(`- 音频${index + 1}: ${item.transcript}`);
+        }
+      }
+      lines.push("- 请把它当成用户本轮真实输入，直接回复其意图。只有用户明确要求“转文字/逐字稿”时，才输出转写文本本身。", "");
+    }
+  } else if (mediaItems.some((item) => isAudioLikeMedia(item) && item.stagedPath) && transcriptErrors.length > 0) {
+    lines.push("[语音转写状态]");
+    lines.push("- 当前未拿到真实转写文本，禁止根据历史上下文或用户追问文本猜测音频内容。");
+    lines.push("- 最近错误：");
+    for (const err of transcriptErrors.slice(0, 3)) {
       lines.push(`  - ${err}`);
     }
     lines.push("");
@@ -814,14 +999,16 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     return false;
   }
 
+  const cfg = resolveConfig(params.cfg, runtime);
   const resolvedMediaItems = await enrichInboundMediaItems(account, parsed.mediaItems, log);
-  const mediaItems = await stageInboundMediaItems(runtime, resolvedMediaItems, log);
+  const stagedMediaItems = await stageInboundMediaItems(runtime, resolvedMediaItems, log);
+  const { mediaItems, transcript } = await transcribeInboundAudioItems(runtime, cfg, stagedMediaItems, log);
   const agentMediaItems = sanitizeMediaItemsForAgent(mediaItems);
-  const rawBody = buildInboundBody(parsed.sourceText, agentMediaItems);
+  const rawBody = buildInboundBody(parsed.sourceText, agentMediaItems, transcript);
   if (!rawBody) {
     return false;
   }
-  const commandBody = resolveCommandBody(parsed.sourceText, mediaItems);
+  const commandBody = resolveCommandBody(parsed.sourceText, mediaItems, transcript);
   const stagedMedia = mediaItems.flatMap((item) =>
     item.stagedPath
       ? [
@@ -836,7 +1023,6 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   const mediaPaths = stagedMedia.map((item) => item.path);
   const mediaTypes = stagedMedia.map((item) => item.mimeType);
 
-  const cfg = resolveConfig(params.cfg, runtime);
   const route = resolveRoute({
     runtime,
     cfg,
@@ -895,6 +1081,7 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     Provider: "zapry",
     Surface: "zapry",
     MessageSid: parsed.messageSid,
+    Transcript: transcript || undefined,
     HasMedia: mediaItems.length > 0,
     MediaItems: agentMediaItems,
     MediaKinds: agentMediaItems.map((item) => item.kind),
