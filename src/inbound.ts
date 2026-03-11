@@ -179,7 +179,7 @@ function resolveCommandBody(sourceText: string | undefined, mediaItems: ParsedIn
     return "";
   }
   const mediaKindText = describeMediaKinds(mediaItems) || "媒体";
-  return `请直接查看并分析这条${mediaKindText}消息，优先使用已提供的 file_id 或 download_url，不要先询问是否需要解析。`;
+  return `请直接查看并分析这条${mediaKindText}消息，优先使用已提供的 file_id 与已附加媒体内容，不要先询问是否需要解析。`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -230,6 +230,31 @@ function resolveInboundMediaRuntime(runtime: any): {
     return null;
   }
   return { fetchRemoteMedia, saveMediaBuffer };
+}
+
+function sanitizeResolvedInboundFileForAgent(file: ResolvedInboundFile | undefined): ResolvedInboundFile | undefined {
+  if (!file) {
+    return undefined;
+  }
+  return {
+    fileId: file.fileId,
+    contentType: file.contentType,
+    fileSize: file.fileSize,
+    fileName: file.fileName,
+    error: file.error,
+  };
+}
+
+function sanitizeMediaItemsForAgent(mediaItems: ParsedInboundMediaItem[]): ParsedInboundMediaItem[] {
+  return mediaItems.map((item) => ({
+    ...item,
+    url: item.fileId ? undefined : item.url,
+    thumbUrl: item.thumbFileId ? undefined : item.thumbUrl,
+    resolvedFile: sanitizeResolvedInboundFileForAgent(item.resolvedFile),
+    resolvedThumbFile: sanitizeResolvedInboundFileForAgent(item.resolvedThumbFile),
+    stagedPath: undefined,
+    stagedMimeType: undefined,
+  }));
 }
 
 async function stageInboundMediaItems(
@@ -433,9 +458,9 @@ function buildInboundBody(sourceText: string | undefined, mediaItems: ParsedInbo
   } else {
     lines.push("- 用户未附加文字时，默认直接理解并分析媒体内容，不要先追问是否需要解析。");
   }
-  lines.push("- 如果结构化数据里已经有 resolvedFile.downloadUrl，请把它当作可直接访问的授权媒体地址。");
-  lines.push("- 只有在 download_url 缺失、失效或权限失败时，才向用户说明并请求重试。");
-  lines.push("- 如果只有 file_id 且没有 resolvedFile.downloadUrl，请立即调用 get-file(file_id)，参数只能传 file_id。", "");
+  lines.push("- 如果结构化数据里已经有 file_id，优先把它视为主读取链路，不要依赖兼容 URL。");
+  lines.push("- 插件会在内部完成 get-file 与媒体下载；模型不应再把 URL 当成主链路。");
+  lines.push("- 只有在媒体本体下载失败或权限失败时，才向用户说明并请求重试。", "");
   if (!hasStagedMedia && stageErrors.length > 0) {
     lines.push("[媒体下载状态]");
     lines.push("- 当前媒体本体下载失败，禁止根据历史上下文猜测图片/视频/文件内容。");
@@ -791,7 +816,8 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
 
   const resolvedMediaItems = await enrichInboundMediaItems(account, parsed.mediaItems, log);
   const mediaItems = await stageInboundMediaItems(runtime, resolvedMediaItems, log);
-  const rawBody = buildInboundBody(parsed.sourceText, mediaItems);
+  const agentMediaItems = sanitizeMediaItemsForAgent(mediaItems);
+  const rawBody = buildInboundBody(parsed.sourceText, agentMediaItems);
   if (!rawBody) {
     return false;
   }
@@ -808,7 +834,6 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
       : [],
   );
   const mediaPaths = stagedMedia.map((item) => item.path);
-  const mediaUrls = stagedMedia.map((item) => item.url);
   const mediaTypes = stagedMedia.map((item) => item.mimeType);
 
   const cfg = resolveConfig(params.cfg, runtime);
@@ -871,12 +896,10 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     Surface: "zapry",
     MessageSid: parsed.messageSid,
     HasMedia: mediaItems.length > 0,
-    MediaItems: mediaItems,
-    MediaKinds: mediaItems.map((item) => item.kind),
+    MediaItems: agentMediaItems,
+    MediaKinds: agentMediaItems.map((item) => item.kind),
     MediaPath: mediaPaths[0],
     MediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
-    MediaUrl: mediaUrls[0],
-    MediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
     MediaType: mediaTypes[0],
     MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
     OriginatingChannel: "zapry",
