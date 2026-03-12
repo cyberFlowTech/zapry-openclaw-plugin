@@ -20,6 +20,7 @@ triggers_api:
     "muteChatMember", "kickChatMember", "setChatTitle", "setChatDescription",
     "getChatAdministrators", "getChatMember", "getChatMemberCount",
     "getMyGroups", "getMyChats", "getMyContacts", "setMyFriendVerify", "getMyFriendRequests",
+    "acceptFriendRequest", "rejectFriendRequest", "addFriend", "deleteFriend",
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
     "createPost", "commentPost", "likePost", "sharePost",
     "getTrendingPosts", "getLatestPosts", "getMyPosts", "searchPosts",
@@ -156,6 +157,10 @@ triggers_api:
 - `set-my-friend-verify`：`need_verify`
 - `get-my-contacts`：可选 `page`, `page_size`
 - `get-my-friend-requests`：可选 `pending_only`
+- `accept-friend-request`：`user_id`（申请者的 user_id）
+- `reject-friend-request`：`user_id`（申请者的 user_id）
+- `add-friend`：`user_id`（目标 user_id）；可选 `message`, `remark`
+- `delete-friend`：`user_id`（要删除的好友 user_id）
 - `set-my-name`：`name`
 - `set-my-description`：`description`
 

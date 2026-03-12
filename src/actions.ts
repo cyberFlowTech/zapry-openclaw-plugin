@@ -57,6 +57,10 @@ const ACTION_ALIASES: Record<string, string> = {
   setmyfriendverify: "set-my-friend-verify",
   getmycontacts: "get-my-contacts",
   getmyfriendrequests: "get-my-friend-requests",
+  acceptfriendrequest: "accept-friend-request",
+  rejectfriendrequest: "reject-friend-request",
+  addfriend: "add-friend",
+  deletefriend: "delete-friend",
   setmysoul: "set-my-soul",
   getmysoul: "get-my-soul",
   setmyskills: "set-my-skills",
@@ -248,6 +252,14 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.getMyContacts(normalized.page, normalized.page_size));
     case "get-my-friend-requests":
       return wrap(client.getMyFriendRequests(normalized.pending_only));
+    case "accept-friend-request":
+      return wrap(client.acceptFriendRequest(normalized.user_id));
+    case "reject-friend-request":
+      return wrap(client.rejectFriendRequest(normalized.user_id));
+    case "add-friend":
+      return wrap(client.addFriend(normalized.user_id, normalized.message, normalized.remark));
+    case "delete-friend":
+      return wrap(client.deleteFriend(normalized.user_id));
     case "set-my-name":
       return wrap(client.setMyName(normalized.name));
     case "set-my-description":
@@ -534,6 +546,10 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     // Agent self management
     "set-my-wallet-address": ["wallet_address"],
     "set-my-friend-verify": ["need_verify"],
+    "accept-friend-request": ["user_id"],
+    "reject-friend-request": ["user_id"],
+    "add-friend": ["user_id"],
+    "delete-friend": ["user_id"],
     "set-my-name": ["name"],
     "set-my-description": ["description"],
 

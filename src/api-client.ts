@@ -244,6 +244,22 @@ export class ZapryApiClient {
     return this.post("getMyFriendRequests", { pending_only: pendingOnly });
   }
 
+  async acceptFriendRequest(userId: string) {
+    return this.post("acceptFriendRequest", { user_id: userId });
+  }
+
+  async rejectFriendRequest(userId: string) {
+    return this.post("rejectFriendRequest", { user_id: userId });
+  }
+
+  async addFriend(userId: string, message?: string, remark?: string) {
+    return this.post("addFriend", { user_id: userId, message, remark });
+  }
+
+  async deleteFriend(userId: string) {
+    return this.post("deleteFriend", { user_id: userId });
+  }
+
   async setMyName(name: string) {
     return this.post("setMyName", { name });
   }
