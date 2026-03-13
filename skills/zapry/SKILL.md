@@ -19,7 +19,7 @@ triggers_api:
     "getFile",
     "getUpdates", "setWebhook", "getWebhookInfo", "deleteWebhook", "webhooks/:token",
     "muteChatMember", "kickChatMember", "setChatTitle", "setChatDescription",
-    "getChatAdministrators", "getChatMember", "getChatMemberCount",
+    "getChatAdministrators", "getChatMember", "getChatMembers", "getChatMemberCount",
     "getMyGroups", "getMyChats", "getMyContacts", "setMyFriendVerify", "getMyFriendRequests",
     "acceptFriendRequest", "rejectFriendRequest", "addFriend", "deleteFriend",
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
@@ -179,6 +179,7 @@ triggers_api:
 - `get-my-groups`：可选 `page`, `page_size`
 - `get-my-chats`：可选 `page`, `page_size`
 - `get-chat-member`：`chat_id`, `user_id`
+- `get-chat-members`：`chat_id`；可选 `page`, `page_size`, `keyword`
 - `get-chat-member-count`：`chat_id`
 - `get-chat-administrators`：`chat_id`
 - `mute-chat-member`：`chat_id`, `user_id`, `mute`
@@ -195,6 +196,7 @@ triggers_api:
 - 只有在没有可用候选 `user_id` 时，才引导用户 `@` 目标用户或回复目标用户消息来补充定位。
 - 群管理场景禁止向用户索要 `chat_id`（该值应从当前会话上下文自动获取）。
 - 当无法定位唯一目标用户时，回复必须简短且可执行：只提示“请直接 @ 目标成员，或回复其消息后再发禁言/解禁”，禁止罗列参数清单。
+- 未 `@` 且仅给昵称时，优先调用 `get-chat-members`（带 `keyword`）做本群成员反查；失败时再降级 `get-chat-administrators`。
 - 当用户仅提供昵称（未 `@`）时，可先在本群成员中反查并给出 **1 个候选**（`name + user_id`），让用户回复“确认禁言/确认解除禁言”后再执行。
 
 ### Agent Self Management

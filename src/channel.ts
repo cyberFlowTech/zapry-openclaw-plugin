@@ -89,7 +89,7 @@ export const zapryPlugin = {
       "delete-message", "answer-callback-query",
       "get-updates", "get-file", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
       "set-my-soul", "get-my-soul", "set-my-skills", "get-my-skills", "get-my-profile",
-      "get-my-groups", "get-my-chats", "get-chat-member", "get-chat-member-count", "get-chat-administrators",
+      "get-my-groups", "get-my-chats", "get-chat-member", "get-chat-members", "get-chat-member-count", "get-chat-administrators",
       "mute-chat-member", "kick-chat-member", "set-chat-title", "set-chat-description",
       "get-me", "get-user-profile-photos", "set-my-wallet-address", "set-my-friend-verify",
       "get-my-contacts", "get-my-friend-requests",

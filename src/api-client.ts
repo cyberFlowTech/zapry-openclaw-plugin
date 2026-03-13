@@ -175,6 +175,15 @@ export class ZapryApiClient {
     return this.post("getChatMember", { chat_id: chatId, user_id: userId });
   }
 
+  async getChatMembers(chatId: string, opts?: { page?: number; pageSize?: number; keyword?: string }) {
+    return this.post("getChatMembers", {
+      chat_id: chatId,
+      page: opts?.page,
+      page_size: opts?.pageSize,
+      keyword: opts?.keyword,
+    });
+  }
+
   async getChatMemberCount(chatId: string) {
     return this.post("getChatMemberCount", { chat_id: chatId });
   }

@@ -44,6 +44,7 @@ const ACTION_ALIASES: Record<string, string> = {
   getmygroups: "get-my-groups",
   getmychats: "get-my-chats",
   getchatmember: "get-chat-member",
+  getchatmembers: "get-chat-members",
   getchatmembercount: "get-chat-member-count",
   getchatmemberscount: "get-chat-member-count",
   getchatadministrators: "get-chat-administrators",
@@ -210,6 +211,14 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.getMyChats(normalized.page, normalized.page_size));
     case "get-chat-member":
       return wrap(client.getChatMember(normalized.chat_id, normalized.user_id));
+    case "get-chat-members":
+      return wrap(
+        client.getChatMembers(normalized.chat_id, {
+          page: normalized.page,
+          pageSize: normalized.page_size,
+          keyword: normalized.keyword,
+        }),
+      );
     case "get-chat-member-count":
       return wrap(client.getChatMemberCount(normalized.chat_id));
     case "get-chat-administrators":
@@ -553,6 +562,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
 
     // Group query & moderation
     "get-chat-member": ["chat_id", "user_id"],
+    "get-chat-members": ["chat_id"],
     "get-chat-member-count": ["chat_id"],
     "get-chat-administrators": ["chat_id"],
     "mute-chat-member": ["chat_id", "user_id", "mute"],

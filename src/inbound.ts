@@ -1446,17 +1446,7 @@ function parseGroupMemberCandidate(
     return null;
   }
 
-  const userId = toUserIdString(
-    record.Id ??
-      record.id ??
-      record.user_id ??
-      record.userId ??
-      record.uid ??
-      rawKey,
-  );
-  if (!userId) {
-    return null;
-  }
+  const explicitUserId = toUserIdString(record.user_id ?? record.userId ?? record.uid);
 
   const groupNick = asNonEmptyString(
     typeof record.Gnick === "string"
@@ -1488,6 +1478,13 @@ function parseGroupMemberCandidate(
       record.user_name ??
       record.userName,
   );
+  const userId = toUserIdString(record.Id ?? record.id ?? explicitUserId ?? rawKey);
+  if (!userId) {
+    return null;
+  }
+  if (!explicitUserId && !groupNick && !nick && !username) {
+    return null;
+  }
   const displayName = groupNick ?? nick ?? (username ? `@${username}` : `用户(${userId})`);
   return {
     userId,
@@ -1552,9 +1549,13 @@ function extractGroupMemberCandidates(payload: unknown): GroupMemberCandidate[] 
     }
     visited.add(record);
 
+    upsertCandidate(parseGroupMemberCandidate(undefined, record));
+
     const membersNodeCandidates = [
       record.Member,
       record.member,
+      record.Items,
+      record.items,
       asRecord(record.Members)?.Member,
       asRecord(record.Members)?.member,
       asRecord(record.members)?.Member,
@@ -1635,14 +1636,29 @@ async function lookupMuteTargetCandidateFromGroupMembers(params: {
   }
 
   try {
-    const resp = await params.client.getChatAdministrators(params.parsed.chatId);
-    if (!resp?.ok) {
+    let candidates: GroupMemberCandidate[] = [];
+    const memberResp = await params.client.getChatMembers(params.parsed.chatId, {
+      page: 1,
+      pageSize: 50,
+      keyword,
+    });
+    if (memberResp?.ok) {
+      candidates = extractGroupMemberCandidates(memberResp.result);
+    } else {
       params.log?.warn?.(
-        `[zapry] member lookup failed for chat ${params.parsed.chatId}: ${resp?.description ?? "unknown"}`,
+        `[zapry] getChatMembers lookup failed for chat ${params.parsed.chatId}: ` +
+          `${memberResp?.description ?? "unknown"}, fallback to getChatAdministrators`,
       );
-      return null;
+      const adminResp = await params.client.getChatAdministrators(params.parsed.chatId);
+      if (!adminResp?.ok) {
+        params.log?.warn?.(
+          `[zapry] fallback getChatAdministrators lookup failed for chat ${params.parsed.chatId}: ` +
+            `${adminResp?.description ?? "unknown"}`,
+        );
+        return null;
+      }
+      candidates = extractGroupMemberCandidates(adminResp.result);
     }
-    const candidates = extractGroupMemberCandidates(resp.result);
     if (!candidates.length) {
       return null;
     }
