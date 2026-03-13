@@ -2,6 +2,11 @@ import { ZapryApiClient } from "./api-client.js";
 import { getZapryRuntime } from "./runtime.js";
 import { sendMessageZapry } from "./send.js";
 import type { ResolvedZapryAccount } from "./types.js";
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 type RuntimeLog = {
   info?: (...args: unknown[]) => void;
@@ -49,6 +54,7 @@ type ParsedInboundMediaItem = {
   stageError?: string;
   transcript?: string;
   transcriptError?: string;
+  sourceTag?: "video-thumb" | "video-keyframe";
 };
 
 type ParsedInboundMessage = {
@@ -78,6 +84,9 @@ type ResolvedInboundFile = {
 const INBOUND_FILE_RESOLVE_TIMEOUT_MS = 8000;
 const INBOUND_MEDIA_STAGE_TIMEOUT_MS = 15000;
 const INBOUND_AUDIO_TRANSCRIBE_TIMEOUT_MS = 20000;
+const INBOUND_VIDEO_POSTER_TIMEOUT_MS = 12000;
+const INBOUND_VIDEO_KEYFRAME_TIMEOUT_MS = 30000;
+const INBOUND_VIDEO_MAX_KEYFRAMES = 8;
 const INBOUND_MEDIA_MAX_BYTES_BY_KIND: Record<ParsedInboundMediaKind, number> = {
   photo: 25 * 1024 * 1024,
   video: 100 * 1024 * 1024,
@@ -310,6 +319,336 @@ function sanitizeMediaItemsForAgent(mediaItems: ParsedInboundMediaItem[]): Parse
   }));
 }
 
+function appendVideoThumbnailMediaItems(mediaItems: ParsedInboundMediaItem[]): ParsedInboundMediaItem[] {
+  if (!mediaItems.length) {
+    return mediaItems;
+  }
+
+  const expanded: ParsedInboundMediaItem[] = [];
+  const seen = new Set<string>();
+  const dedupeKey = (item: ParsedInboundMediaItem): string =>
+    `${item.kind}|${item.fileId ?? ""}|${item.url ?? ""}|${item.sourceTag ?? ""}`;
+
+  const appendOnce = (item: ParsedInboundMediaItem): void => {
+    const key = dedupeKey(item);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    expanded.push(item);
+  };
+
+  for (const item of mediaItems) {
+    appendOnce(item);
+    if (item.kind !== "video") {
+      continue;
+    }
+
+    const thumbUrl = item.resolvedThumbFile?.downloadUrl ?? item.thumbUrl;
+    const thumbFileId = item.thumbFileId;
+    if (!thumbUrl && !thumbFileId) {
+      continue;
+    }
+
+    const thumbMime = item.resolvedThumbFile?.contentType;
+    const fallbackName =
+      item.resolvedThumbFile?.fileName ??
+      (thumbFileId ? `video-thumb-${thumbFileId}.jpg` : undefined);
+    appendOnce({
+      kind: "photo",
+      fileId: thumbFileId,
+      url: thumbUrl,
+      mimeType: thumbMime,
+      fileName: fallbackName,
+      fileSize: item.resolvedThumbFile?.fileSize,
+      resolvedFile: item.resolvedThumbFile,
+      sourceTag: "video-thumb",
+    });
+  }
+
+  return expanded;
+}
+
+async function runProcessWithTimeout(command: string, args: string[], timeoutMs: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += String(chunk);
+    });
+
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.once("error", (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.once("exit", (code: number | null) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${command} failed (${code}): ${stderr.trim() || "no stderr"}`));
+    });
+  });
+}
+
+async function extractVideoPosterPngBuffer(videoPath: string, log?: RuntimeLog): Promise<Buffer | null> {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  const outputDir = path.join(os.tmpdir(), `openclaw-zapry-video-thumb-${randomUUID()}`);
+  try {
+    await fs.mkdir(outputDir, { recursive: true });
+    await runProcessWithTimeout(
+      "/usr/bin/qlmanage",
+      ["-t", "-s", "1024", "-o", outputDir, videoPath],
+      INBOUND_VIDEO_POSTER_TIMEOUT_MS,
+    );
+
+    const files = await fs.readdir(outputDir);
+    const posterFile = files.find((f: string) => f.toLowerCase().endsWith(".png"));
+    if (!posterFile) {
+      return null;
+    }
+
+    return await fs.readFile(path.join(outputDir, posterFile));
+  } catch (error) {
+    log?.debug?.(`[zapry] generate video poster failed for ${videoPath}: ${String(error)}`);
+    return null;
+  } finally {
+    await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function getVideoDurationSeconds(videoPath: string): Promise<number | null> {
+  return new Promise<number | null>((resolve) => {
+    const child = spawn("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      videoPath,
+    ], { stdio: ["ignore", "pipe", "ignore"] });
+
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve(null);
+    }, 8000);
+
+    child.once("error", () => { clearTimeout(timer); resolve(null); });
+    child.once("exit", (code: number | null) => {
+      clearTimeout(timer);
+      if (code !== 0) { resolve(null); return; }
+      const dur = parseFloat(stdout.trim());
+      resolve(Number.isFinite(dur) && dur > 0 ? dur : null);
+    });
+  });
+}
+
+function computeKeyframeTimestamps(durationSec: number): number[] {
+  let count: number;
+  if (durationSec < 3) count = 2;
+  else if (durationSec < 10) count = 3;
+  else if (durationSec < 30) count = 5;
+  else if (durationSec < 90) count = 6;
+  else count = INBOUND_VIDEO_MAX_KEYFRAMES;
+
+  count = Math.min(count, INBOUND_VIDEO_MAX_KEYFRAMES);
+  const step = durationSec / (count + 1);
+  const timestamps: number[] = [];
+  for (let i = 1; i <= count; i++) {
+    timestamps.push(Math.round(step * i * 100) / 100);
+  }
+  return timestamps;
+}
+
+async function extractSingleFrameJpeg(
+  videoPath: string,
+  timestampSec: number,
+  outputPath: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  try {
+    await runProcessWithTimeout(
+      "ffmpeg",
+      ["-ss", String(timestampSec), "-i", videoPath, "-frames:v", "1", "-q:v", "3", "-f", "image2", "-y", outputPath],
+      timeoutMs,
+    );
+    const stat = await fs.stat(outputPath);
+    return stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function extractVideoKeyframeBuffers(
+  videoPath: string,
+  log?: RuntimeLog,
+): Promise<{ buffer: Buffer; timestampSec: number }[]> {
+  const duration = await getVideoDurationSeconds(videoPath);
+  if (!duration) {
+    const poster = await extractVideoPosterPngBuffer(videoPath, log);
+    return poster ? [{ buffer: poster, timestampSec: 0 }] : [];
+  }
+
+  const timestamps = computeKeyframeTimestamps(duration);
+  const outputDir = path.join(os.tmpdir(), `openclaw-zapry-keyframes-${randomUUID()}`);
+  try {
+    await fs.mkdir(outputDir, { recursive: true });
+    const perFrameTimeout = Math.max(5000, Math.floor(INBOUND_VIDEO_KEYFRAME_TIMEOUT_MS / timestamps.length));
+
+    const framePromises = timestamps.map(async (ts, index) => {
+      const outPath = path.join(outputDir, `frame-${String(index).padStart(3, "0")}.jpg`);
+      const ok = await extractSingleFrameJpeg(videoPath, ts, outPath, perFrameTimeout);
+      if (!ok) return null;
+      try {
+        const buf = await fs.readFile(outPath);
+        return buf.length > 0 ? { buffer: buf, timestampSec: ts } : null;
+      } catch { return null; }
+    });
+
+    const results = (await Promise.all(framePromises)).filter(
+      (r): r is NonNullable<typeof r> => r !== null,
+    );
+
+    if (results.length > 0) return results;
+    const poster = await extractVideoPosterPngBuffer(videoPath, log);
+    return poster ? [{ buffer: poster, timestampSec: 0 }] : [];
+  } catch (error) {
+    log?.debug?.(`[zapry] extract video keyframes failed for ${videoPath}: ${String(error)}`);
+    const poster = await extractVideoPosterPngBuffer(videoPath, log);
+    return poster ? [{ buffer: poster, timestampSec: 0 }] : [];
+  } finally {
+    await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function appendVideoKeyframeItems(
+  runtime: any,
+  mediaItems: ParsedInboundMediaItem[],
+  log?: RuntimeLog,
+): Promise<ParsedInboundMediaItem[]> {
+  if (!mediaItems.length) return mediaItems;
+
+  const mediaRuntime = resolveInboundMediaRuntime(runtime);
+  if (!mediaRuntime) return mediaItems;
+
+  const output = [...mediaItems];
+  for (const item of mediaItems) {
+    if (item.kind !== "video" || !item.stagedPath || item.stageError) continue;
+
+    const frames = await extractVideoKeyframeBuffers(item.stagedPath, log);
+    if (!frames.length) continue;
+
+    const baseName = path.parse(item.fileName ?? "video").name;
+    const isSinglePoster = frames.length === 1 && frames[0].timestampSec === 0;
+
+    for (const [idx, frame] of frames.entries()) {
+      const tag: "video-thumb" | "video-keyframe" = isSinglePoster ? "video-thumb" : "video-keyframe";
+      const mime = isSinglePoster ? "image/png" : "image/jpeg";
+      const ext = isSinglePoster ? "png" : "jpg";
+      const tsLabel = isSinglePoster ? "poster" : `at-${frame.timestampSec}s`;
+      const fileName = `${baseName}-keyframe-${idx + 1}-${tsLabel}.${ext}`;
+      try {
+        const saved = await withTimeout(
+          mediaRuntime.saveMediaBuffer(frame.buffer, mime, "inbound", INBOUND_MEDIA_MAX_BYTES_BY_KIND.photo, fileName),
+          INBOUND_MEDIA_STAGE_TIMEOUT_MS,
+          `save video keyframe ${idx + 1} of ${item.fileId ?? "video"}`,
+        );
+        output.push({
+          kind: "photo",
+          mimeType: saved.contentType ?? mime,
+          fileName,
+          stagedPath: saved.path,
+          stagedMimeType: saved.contentType ?? mime,
+          sourceTag: tag,
+        });
+      } catch (error) {
+        log?.debug?.(`[zapry] save keyframe ${idx + 1} failed for ${item.fileId ?? "video"}: ${String(error)}`);
+      }
+    }
+  }
+
+  return output;
+}
+
+async function appendVideoPosterFallbackItems(
+  runtime: any,
+  mediaItems: ParsedInboundMediaItem[],
+  log?: RuntimeLog,
+): Promise<ParsedInboundMediaItem[]> {
+  if (!mediaItems.length) {
+    return mediaItems;
+  }
+
+  const mediaRuntime = resolveInboundMediaRuntime(runtime);
+  if (!mediaRuntime) {
+    return mediaItems;
+  }
+
+  const output = [...mediaItems];
+  for (const item of mediaItems) {
+    if (item.kind !== "video" || !item.stagedPath || item.stageError) {
+      continue;
+    }
+
+    const hasRenderableThumb = output.some(
+      (candidate) =>
+        candidate.kind === "photo" &&
+        candidate.sourceTag === "video-thumb" &&
+        Boolean(candidate.stagedPath),
+    );
+    if (hasRenderableThumb) {
+      continue;
+    }
+
+    const posterBuffer = await extractVideoPosterPngBuffer(item.stagedPath, log);
+    if (!posterBuffer) {
+      continue;
+    }
+
+    try {
+      const saved = await withTimeout(
+        mediaRuntime.saveMediaBuffer(
+          posterBuffer,
+          "image/png",
+          "inbound",
+          INBOUND_MEDIA_MAX_BYTES_BY_KIND.photo,
+          `${path.parse(item.fileName ?? "video").name}-poster.png`,
+        ),
+        INBOUND_MEDIA_STAGE_TIMEOUT_MS,
+        `save inbound video poster ${item.fileId ?? "video"}`,
+      );
+      output.push({
+        kind: "photo",
+        mimeType: saved.contentType ?? "image/png",
+        fileName: `${path.parse(item.fileName ?? "video").name}-poster.png`,
+        stagedPath: saved.path,
+        stagedMimeType: saved.contentType ?? "image/png",
+        sourceTag: "video-thumb",
+      });
+    } catch (error) {
+      log?.debug?.(`[zapry] save generated video poster failed for ${item.fileId ?? "video"}: ${String(error)}`);
+    }
+  }
+
+  return output;
+}
+
 function resolveInboundSttRuntime(runtime: any):
   | {
       transcribeAudioFile: (params: {
@@ -473,6 +812,22 @@ function parseMediaObject(kind: ParsedInboundMediaKind, raw: unknown): ParsedInb
     return null;
   }
   const thumb = asRecord(media.thumb) ?? asRecord(media.thumbnail);
+  const thumbFileId =
+    asNonEmptyString(thumb?.file_id ?? thumb?.fileId) ??
+    asNonEmptyString(
+      media.thumb_file_id ??
+      media.thumbFileId ??
+      media.thumbnail_file_id ??
+      media.thumbnailFileId,
+    );
+  const thumbUrl =
+    asNonEmptyString(thumb?.url ?? thumb?.remotePath) ??
+    asNonEmptyString(
+      media.thumb_url ??
+      media.thumbUrl ??
+      media.thumbnail_url ??
+      media.thumbnailUrl,
+    );
 
   const item: ParsedInboundMediaItem = {
     kind,
@@ -485,8 +840,8 @@ function parseMediaObject(kind: ParsedInboundMediaKind, raw: unknown): ParsedInb
     width: parseFiniteNumber(media.width),
     height: parseFiniteNumber(media.height),
     duration: parseFiniteNumber(media.duration),
-    thumbFileId: asNonEmptyString(thumb?.file_id ?? thumb?.fileId),
-    thumbUrl: asNonEmptyString(thumb?.url ?? thumb?.remotePath),
+    thumbFileId,
+    thumbUrl,
   };
 
   const hasUsefulField =
@@ -540,6 +895,11 @@ function extractInboundMediaItems(message: Record<string, unknown>): ParsedInbou
 
 function summarizeMediaItem(item: ParsedInboundMediaItem): string {
   const parts: string[] = [item.kind];
+  if (item.sourceTag === "video-thumb") {
+    parts.push("source=video_thumb");
+  } else if (item.sourceTag === "video-keyframe") {
+    parts.push("source=video_keyframe");
+  }
   if (item.fileId) {
     parts.push(`file_id=${item.fileId}`);
   }
@@ -607,6 +967,16 @@ function buildInboundBody(
     lines.push("- 禁止只回复“我已收到”“我现在开始转写”“稍后给你结果”之类进度说明。");
   }
   lines.push("- 只有在媒体本体下载失败或权限失败时，才向用户说明并请求重试。", "");
+
+  const keyframeItems = mediaItems.filter((item) => item.sourceTag === "video-keyframe");
+  if (keyframeItems.length > 0) {
+    lines.push("[视频关键帧说明]");
+    lines.push(`- 以下 ${keyframeItems.length} 张图片是从视频中按时间均匀抽取的关键帧，已按时间顺序排列。`);
+    lines.push("- 请结合所有关键帧来理解视频的完整内容、场景变化和动作序列。");
+    lines.push("- 关键帧文件名中的 at-Xs 表示该帧在视频中的时间位置（秒）。");
+    lines.push("- 回复时请综合所有帧信息进行整体分析，不要逐帧罗列。", "");
+  }
+
   if (!hasStagedMedia && stageErrors.length > 0) {
     lines.push("[媒体下载状态]");
     lines.push("- 当前媒体本体下载失败，禁止根据历史上下文猜测图片/视频/文件内容。");
@@ -1001,8 +1371,10 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
 
   const cfg = resolveConfig(params.cfg, runtime);
   const resolvedMediaItems = await enrichInboundMediaItems(account, parsed.mediaItems, log);
-  const stagedMediaItems = await stageInboundMediaItems(runtime, resolvedMediaItems, log);
-  const { mediaItems, transcript } = await transcribeInboundAudioItems(runtime, cfg, stagedMediaItems, log);
+  const expandedMediaItems = appendVideoThumbnailMediaItems(resolvedMediaItems);
+  const stagedMediaItems = await stageInboundMediaItems(runtime, expandedMediaItems, log);
+  const finalizedMediaItems = await appendVideoKeyframeItems(runtime, stagedMediaItems, log);
+  const { mediaItems, transcript } = await transcribeInboundAudioItems(runtime, cfg, finalizedMediaItems, log);
   const agentMediaItems = sanitizeMediaItemsForAgent(mediaItems);
   const rawBody = buildInboundBody(parsed.sourceText, agentMediaItems, transcript);
   if (!rawBody) {

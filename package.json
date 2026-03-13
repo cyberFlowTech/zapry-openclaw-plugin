@@ -5,12 +5,17 @@
   "type": "module",
   "license": "MIT",
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "files": [
     "index.ts",
     "src/",
     "skills/",
     "openclaw.plugin.json"
-  ]
+  ],
+  "devDependencies": {
+    "@types/node": "^25.5.0"
+  }
 }
