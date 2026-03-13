@@ -115,6 +115,7 @@ const INBOUND_VIDEO_POSTER_TIMEOUT_MS = 12000;
 const INBOUND_VIDEO_KEYFRAME_TIMEOUT_MS = 30000;
 const INBOUND_VIDEO_MAX_KEYFRAMES = 8;
 const PENDING_MUTE_CONFIRMATION_TTL_MS = 3 * 60 * 1000;
+const GROUP_MEMBERS_QUICK_REPLY_LIMIT = 12;
 const INBOUND_MEDIA_MAX_BYTES_BY_KIND: Record<ParsedInboundMediaKind, number> = {
   photo: 25 * 1024 * 1024,
   video: 100 * 1024 * 1024,
@@ -1624,6 +1625,123 @@ function scoreGroupMemberCandidate(
   return score;
 }
 
+function isLikelyGroupMembersQueryMessage(text: string | undefined): boolean {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "当前群里都有谁",
+    "群里都有谁",
+    "这个群里都有谁",
+    "群成员",
+    "成员列表",
+    "群成员列表",
+    "群里谁在",
+    "who is in this group",
+    "list group members",
+    "member list",
+  ].some((token) => normalized.includes(token));
+}
+
+function buildGroupMembersLookupFailureText(errorCode?: number, description?: string): string {
+  if (errorCode === 403) {
+    return "查询失败：我没有该群的查询权限，请先把我设为管理员后再试。";
+  }
+  const normalizedDesc = description?.toLowerCase() ?? "";
+  if (
+    errorCode === 503 ||
+    normalizedDesc.includes("service unavailable") ||
+    normalizedDesc.includes("connection error")
+  ) {
+    return "查询失败：服务暂时不可用（503），我稍后可以再试一次。";
+  }
+  if (errorCode === 404 || normalizedDesc.includes("not found")) {
+    return "查询失败：暂未找到该群信息，请稍后再试。";
+  }
+  return "查询失败：我暂时拿不到群成员数据，请稍后再试。";
+}
+
+function buildGroupMembersQuickReplyText(candidates: GroupMemberCandidate[], total?: number): string {
+  if (!candidates.length) {
+    return "我现在没查到可用的群成员数据，请稍后重试。";
+  }
+  const resolvedTotal =
+    typeof total === "number" && Number.isFinite(total) && total > 0 ? Math.floor(total) : candidates.length;
+  const shown = candidates.slice(0, GROUP_MEMBERS_QUICK_REPLY_LIMIT);
+  const lines: string[] = [];
+  if (resolvedTotal > shown.length) {
+    lines.push(`当前群里共 ${resolvedTotal} 位成员，先给你前 ${shown.length} 位：`);
+  } else {
+    lines.push(`当前群里共 ${resolvedTotal} 位成员：`);
+  }
+  for (const candidate of shown) {
+    const displayName = candidate.displayName?.trim() || `用户(${candidate.userId})`;
+    lines.push(`- ${displayName}（${candidate.userId}）`);
+  }
+  if (resolvedTotal > shown.length) {
+    lines.push(`如需继续看剩余成员，回复“继续”或“下一页”。`);
+  }
+  return lines.join("\n");
+}
+
+function resolveGroupMembersTotalFromPayload(payload: unknown, fallback: number): number {
+  const record = asRecord(payload);
+  if (!record) {
+    return fallback;
+  }
+  const total = parseFiniteNumber(record.total ?? record.Total ?? record.member_count ?? record.count);
+  if (typeof total === "number" && Number.isFinite(total) && total > 0) {
+    return Math.floor(total);
+  }
+  return fallback;
+}
+
+async function queryGroupMembersForQuickReply(params: {
+  client: ZapryApiClient;
+  chatId: string;
+  log?: RuntimeLog;
+}): Promise<{
+  candidates: GroupMemberCandidate[];
+  total: number;
+  errorCode?: number;
+  description?: string;
+}> {
+  const memberResp = await params.client.getChatMembers(params.chatId, {
+    page: 1,
+    pageSize: 80,
+  });
+  if (memberResp?.ok) {
+    const candidates = extractGroupMemberCandidates(memberResp.result);
+    return {
+      candidates,
+      total: resolveGroupMembersTotalFromPayload(memberResp.result, candidates.length),
+    };
+  }
+
+  params.log?.warn?.(
+    `[zapry] getChatMembers failed for chat ${params.chatId}: ` +
+      `${memberResp?.description ?? "unknown"}, fallback to getChatAdministrators`,
+  );
+  const adminResp = await params.client.getChatAdministrators(params.chatId);
+  if (adminResp?.ok) {
+    const candidates = extractGroupMemberCandidates(adminResp.result);
+    return {
+      candidates,
+      total: resolveGroupMembersTotalFromPayload(adminResp.result, candidates.length),
+      errorCode: memberResp?.error_code,
+      description: memberResp?.description,
+    };
+  }
+
+  return {
+    candidates: [],
+    total: 0,
+    errorCode: adminResp?.error_code ?? memberResp?.error_code,
+    description: adminResp?.description ?? memberResp?.description,
+  };
+}
+
 async function lookupMuteTargetCandidateFromGroupMembers(params: {
   client: ZapryApiClient;
   parsed: ParsedInboundMessage;
@@ -1940,6 +2058,55 @@ async function tryHandleMuteCommandQuickPath(params: {
   });
 }
 
+async function tryHandleGroupMembersQueryQuickPath(params: {
+  account: ResolvedZapryAccount;
+  parsed: ParsedInboundMessage;
+  statusSink?: StatusSink;
+  log?: RuntimeLog;
+}): Promise<boolean> {
+  const { account, parsed, statusSink, log } = params;
+  if (!parsed.isGroup) {
+    return false;
+  }
+  if (!isLikelyGroupMembersQueryMessage(parsed.sourceText)) {
+    return false;
+  }
+
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  try {
+    const lookup = await queryGroupMembersForQuickReply({
+      client,
+      chatId: parsed.chatId,
+      log,
+    });
+    if (!lookup.candidates.length) {
+      return sendModerationQuickReply({
+        account,
+        chatId: parsed.chatId,
+        text: buildGroupMembersLookupFailureText(lookup.errorCode, lookup.description),
+        statusSink,
+        log,
+      });
+    }
+    return sendModerationQuickReply({
+      account,
+      chatId: parsed.chatId,
+      text: buildGroupMembersQuickReplyText(lookup.candidates, lookup.total),
+      statusSink,
+      log,
+    });
+  } catch (error) {
+    log?.warn?.(`[${account.accountId}] group members quick path failed: ${String(error)}`);
+    return sendModerationQuickReply({
+      account,
+      chatId: parsed.chatId,
+      text: buildGroupMembersLookupFailureText(),
+      statusSink,
+      log,
+    });
+  }
+}
+
 export async function tryHandleZapryInboundQuickPaths(params: {
   account: ResolvedZapryAccount;
   update: any;
@@ -1957,6 +2124,16 @@ export async function tryHandleZapryInboundQuickPaths(params: {
     log: params.log,
   });
   if (handledByMuteQuickPath) {
+    params.statusSink?.({ lastInboundAt: Date.now() });
+    return true;
+  }
+  const handledByGroupMembersQuickPath = await tryHandleGroupMembersQueryQuickPath({
+    account: params.account,
+    parsed,
+    statusSink: params.statusSink,
+    log: params.log,
+  });
+  if (handledByGroupMembersQuickPath) {
     params.statusSink?.({ lastInboundAt: Date.now() });
     return true;
   }
