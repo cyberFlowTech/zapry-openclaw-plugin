@@ -19,6 +19,15 @@ Install this plugin to let your OpenClaw agent interact with Zapry through `chan
 openclaw plugins install @zapry/openclaw-plugin
 ```
 
+## Development Notes
+
+- `node_modules/` is ignored by Git and should not be committed.
+- If `node_modules` was ever tracked in your local branch, untrack it with:
+
+```bash
+git rm -r --cached node_modules
+```
+
 ## Configure
 
 Get a bot token from [Zapry BotMother](https://botmother-dev.mimo.immo), then add it to your config:
