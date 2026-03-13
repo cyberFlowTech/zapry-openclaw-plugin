@@ -15,7 +15,7 @@ triggers_api:
   [
     "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
     "deleteMessage", "answerCallbackQuery",
-    "getFile", "setMyCommands", "getMyCommands", "deleteMyCommands",
+    "getFile",
     "getUpdates", "setWebhook", "getWebhookInfo", "deleteWebhook", "webhooks/:token",
     "muteChatMember", "kickChatMember", "setChatTitle", "setChatDescription",
     "getChatAdministrators", "getChatMember", "getChatMemberCount",
@@ -58,7 +58,6 @@ triggers_api:
 - `set-my-name` / `set-my-description` / `set-my-wallet-address`
 - `set-my-friend-verify`
 - `set-my-soul` / `set-my-skills`
-- `set-my-commands` / `delete-my-commands`
 - `set-webhook` / `delete-webhook`
 
 **判断规则：**
@@ -148,7 +147,7 @@ triggers_api:
 - `delete-message`：`chat_id`, `message_id`
 - `answer-callback-query`：`chat_id`, `callback_query_id`；可选 `text`, `show_alert`
 
-### Receive / Commands / Webhook
+### Receive / Webhook / Skills
 
 - `get-updates`：可选 `offset`, `limit`, `timeout`
 - `get-file`：`file_id`
@@ -156,9 +155,6 @@ triggers_api:
 - `get-webhook-info`：无参
 - `delete-webhook`：无参
 - `webhooks-token`：无参（返回 `/webhooks/:token` 入站端点信息）
-- `set-my-commands`：`commands`（JSON string）；可选 `language_code`
-- `get-my-commands`：可选 `language_code`
-- `delete-my-commands`：可选 `language_code`
 - `set-my-soul`：`soulMd`；可选 `version`, `source`, `agentKey`
 - `get-my-soul`：无参
 - `set-my-skills`：`skills`（非空数组，项需 `skillKey`+`content`）；可选 `version`, `source`, `agentKey`
@@ -213,7 +209,6 @@ triggers_api:
 - `action` 必须是上面的标准名
 - 必填参数存在且非空
 - 媒体字段满足来源约束
-- `set-my-commands.commands` 是可解析 JSON 字符串
 - `set-my-skills.skills` 非空且每项含 `skillKey/content`
 
 ## 6) 错误处理建议

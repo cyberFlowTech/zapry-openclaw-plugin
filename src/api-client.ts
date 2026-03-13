@@ -139,26 +139,7 @@ export class ZapryApiClient {
     return this.post("deleteWebhook");
   }
 
-  // ── Skills & Commands ──
-
-  async setMyCommands(commands: string, languageCode?: string) {
-    return this.post("setMyCommands", {
-      commands,
-      language_code: languageCode,
-    });
-  }
-
-  async getMyCommands(languageCode?: string) {
-    return this.post("getMyCommands", {
-      language_code: languageCode,
-    });
-  }
-
-  async deleteMyCommands(languageCode?: string) {
-    return this.post("deleteMyCommands", {
-      language_code: languageCode,
-    });
-  }
+  // ── Skills ──
 
   async setMySoul(payload: SetMySoulPayload) {
     return this.post("setMySoul", payload);

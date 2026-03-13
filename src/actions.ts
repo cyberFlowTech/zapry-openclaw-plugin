@@ -35,10 +35,6 @@ const ACTION_ALIASES: Record<string, string> = {
   deletewebhook: "delete-webhook",
   webhookstoken: "webhooks-token",
 
-  setmycommands: "set-my-commands",
-  getmycommands: "get-my-commands",
-  deletemycommands: "delete-my-commands",
-
   getmygroups: "get-my-groups",
   getmychats: "get-my-chats",
   getchatmember: "get-chat-member",
@@ -157,13 +153,7 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
         },
       };
 
-    // ── Skills & Commands ──
-    case "set-my-commands":
-      return wrap(client.setMyCommands(normalized.commands, normalized.language_code));
-    case "get-my-commands":
-      return wrap(client.getMyCommands(normalized.language_code));
-    case "delete-my-commands":
-      return wrap(client.deleteMyCommands(normalized.language_code));
+    // ── Skills ──
     case "set-my-soul":
       return wrap(
         client.setMySoul({
@@ -532,8 +522,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     "get-file": ["file_id"],
     "set-webhook": ["url"],
 
-    // Skills / Commands
-    "set-my-commands": ["commands"],
+    // Skills
     "set-my-soul": ["soulMd"],
     "set-my-skills": ["skills"],
 
@@ -587,13 +576,6 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     }
   }
 
-  if (action === "set-my-commands") {
-    const commandsErr = validateCommandsPayload(params.commands);
-    if (commandsErr) {
-      return commandsErr;
-    }
-  }
-
   if (action === "set-my-skills") {
     const skillsErr = validateSkillsPayload(params.skills);
     if (skillsErr) {
@@ -622,36 +604,6 @@ function validateMediaSource(value: unknown, fieldName: string): string | null {
     `invalid ${fieldName}: only data URI or /_temp/media URL is supported by Zapry OpenAPI ` +
     "(external http(s) file URL is not accepted)"
   );
-}
-
-function validateCommandsPayload(commands: unknown): string | null {
-  if (!isNonEmptyString(commands)) {
-    return "invalid commands: must be a non-empty JSON string";
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(commands);
-  } catch {
-    return "invalid commands: must be a JSON string array of {command,description}";
-  }
-
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    return "invalid commands: at least one command item is required";
-  }
-
-  for (const [idx, item] of parsed.entries()) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      return `invalid commands[${idx}]: object is required`;
-    }
-    const command = (item as Record<string, unknown>).command;
-    const description = (item as Record<string, unknown>).description;
-    if (!isNonEmptyString(command) || !isNonEmptyString(description)) {
-      return `invalid commands[${idx}]: command and description are required`;
-    }
-  }
-
-  return null;
 }
 
 function validateSkillsPayload(skills: unknown): string | null {
@@ -754,19 +706,6 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (desc !== undefined) params.desc = String(desc).trim();
   const avatar = pickFirst(params, ["avatar"]);
   if (avatar !== undefined) params.avatar = String(avatar).trim();
-
-  const commands = pickFirst(params, ["commands"]);
-  if (commands !== undefined) {
-    if (typeof commands === "string") {
-      params.commands = commands.trim();
-    } else {
-      try {
-        params.commands = JSON.stringify(commands);
-      } catch {
-        params.commands = String(commands);
-      }
-    }
-  }
 
   if (skills !== undefined) {
     if (Array.isArray(skills)) {
