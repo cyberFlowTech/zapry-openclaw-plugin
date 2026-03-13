@@ -212,13 +212,7 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
     case "get-chat-member":
       return wrap(client.getChatMember(normalized.chat_id, normalized.user_id));
     case "get-chat-members":
-      return wrap(
-        client.getChatMembers(normalized.chat_id, {
-          page: normalized.page,
-          pageSize: normalized.page_size,
-          keyword: normalized.keyword,
-        }),
-      );
+      return handleGetChatMembersAction(client, normalized);
     case "get-chat-member-count":
       return wrap(client.getChatMemberCount(normalized.chat_id));
     case "get-chat-administrators":
@@ -905,6 +899,266 @@ function normalizeStringArray(value: unknown): string[] | null {
     return [trimmed];
   }
   return null;
+}
+
+async function handleGetChatMembersAction(
+  client: ZapryApiClient,
+  params: Record<string, any>,
+): Promise<ActionResult> {
+  const response = await client.getChatMembers(params.chat_id, {
+    page: params.page,
+    pageSize: params.page_size,
+    keyword: params.keyword,
+  });
+  if (response.ok) {
+    return { ok: true, result: response.result };
+  }
+
+  const description = String(response.description ?? "request failed").trim() || "request failed";
+  const loweredDescription = description.toLowerCase();
+  const shouldFallbackToAdmins =
+    response.error_code === 404 ||
+    loweredDescription.includes("not found") ||
+    loweredDescription.includes("404");
+  if (!shouldFallbackToAdmins) {
+    return { ok: false, error: description };
+  }
+
+  const fallbackResponse = await client.getChatAdministrators(params.chat_id);
+  if (!fallbackResponse.ok) {
+    return { ok: false, error: String(fallbackResponse.description ?? description) };
+  }
+  return {
+    ok: true,
+    result: normalizeChatMembersFallbackResult(fallbackResponse.result, {
+      chatId: params.chat_id,
+      page: params.page,
+      pageSize: params.page_size,
+      keyword: params.keyword,
+    }),
+  };
+}
+
+function normalizeChatMembersFallbackResult(
+  payload: unknown,
+  options: {
+    chatId: string;
+    page?: unknown;
+    pageSize?: unknown;
+    keyword?: unknown;
+  },
+): Record<string, unknown> {
+  const page = parsePositiveInteger(options.page, 1);
+  const pageSize = Math.min(200, parsePositiveInteger(options.pageSize, 50));
+  const keyword = isNonEmptyString(options.keyword) ? options.keyword.trim() : "";
+  const keywordLower = keyword.toLowerCase();
+  const groupRecord = resolveGroupRecord(payload, options.chatId);
+  if (!groupRecord) {
+    return {
+      chat_id: normalizeResultChatId(options.chatId),
+      keyword,
+      page,
+      page_size: pageSize,
+      total: 0,
+      items: [],
+    };
+  }
+
+  const ownerUserId = toNonZeroString(groupRecord.UserId ?? groupRecord.user_id);
+  const managerIdsRaw = Array.isArray(groupRecord.Manages)
+    ? groupRecord.Manages
+    : Array.isArray(groupRecord.manages)
+      ? groupRecord.manages
+      : [];
+  const managerIds = new Set<string>(
+    managerIdsRaw
+      .map((value) => toNonZeroString(value))
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  const membersRecord = asObjectRecord(
+    asObjectRecord(groupRecord.Members)?.Member ??
+      asObjectRecord(groupRecord.Members)?.member ??
+      asObjectRecord(groupRecord.members)?.Member ??
+      asObjectRecord(groupRecord.members)?.member,
+  );
+
+  const items: Array<Record<string, unknown>> = [];
+  const seenUserIds = new Set<string>();
+
+  for (const [rawUserId, rawMember] of Object.entries(membersRecord ?? {})) {
+    const member = asObjectRecord(rawMember);
+    if (!member) {
+      continue;
+    }
+    const userId =
+      toNonZeroString(rawUserId) ??
+      toNonZeroString(member.user_id ?? member.userId ?? member.uid ?? member.Id ?? member.id);
+    if (!userId) {
+      continue;
+    }
+    const nick = toOptionalString(member.Nick ?? member.nick ?? member.name);
+    const groupNick = toOptionalString(
+      member.Gnick ?? member.gnick ?? member.group_nick ?? member.groupNick,
+    );
+    const displayName = groupNick ?? nick ?? `用户(${userId})`;
+    const searchable = `${userId} ${displayName} ${groupNick ?? ""} ${nick ?? ""}`.toLowerCase();
+    if (keywordLower && !searchable.includes(keywordLower)) {
+      continue;
+    }
+    const role = userId === ownerUserId ? "owner" : managerIds.has(userId) ? "admin" : "member";
+    seenUserIds.add(userId);
+    items.push({
+      user_id: userId,
+      display_name: displayName,
+      group_nick: groupNick ?? "",
+      nick: nick ?? "",
+      avatar: toOptionalString(member.Avatar ?? member.avatar) ?? "",
+      status: toOptionalNumber(member.Status ?? member.status) ?? 0,
+      role,
+      is_owner: role === "owner",
+      is_admin: role === "owner" || role === "admin",
+      joined_at: toOptionalNumber(member.Ctime ?? member.ctime ?? member.joined_at) ?? 0,
+    });
+  }
+
+  const adminCandidates = Array.from(managerIds);
+  if (ownerUserId) {
+    adminCandidates.unshift(ownerUserId);
+  }
+  for (const userId of adminCandidates) {
+    if (!userId || seenUserIds.has(userId)) {
+      continue;
+    }
+    const displayName = `用户(${userId})`;
+    const searchable = `${userId} ${displayName}`.toLowerCase();
+    if (keywordLower && !searchable.includes(keywordLower)) {
+      continue;
+    }
+    const role = userId === ownerUserId ? "owner" : "admin";
+    items.push({
+      user_id: userId,
+      display_name: displayName,
+      group_nick: "",
+      nick: "",
+      avatar: "",
+      status: 0,
+      role,
+      is_owner: role === "owner",
+      is_admin: true,
+      joined_at: 0,
+    });
+  }
+
+  items.sort((left, right) => {
+    const leftOwner = left.is_owner === true ? 1 : 0;
+    const rightOwner = right.is_owner === true ? 1 : 0;
+    if (leftOwner !== rightOwner) {
+      return rightOwner - leftOwner;
+    }
+    const leftAdmin = left.is_admin === true ? 1 : 0;
+    const rightAdmin = right.is_admin === true ? 1 : 0;
+    if (leftAdmin !== rightAdmin) {
+      return rightAdmin - leftAdmin;
+    }
+    const leftName = String(left.display_name ?? "").toLowerCase();
+    const rightName = String(right.display_name ?? "").toLowerCase();
+    if (leftName !== rightName) {
+      return leftName.localeCompare(rightName);
+    }
+    return String(left.user_id ?? "").localeCompare(String(right.user_id ?? ""));
+  });
+
+  const total = items.length;
+  const start = Math.min(Math.max(0, (page - 1) * pageSize), total);
+  const end = Math.min(start + pageSize, total);
+  return {
+    chat_id: normalizeResultChatId(options.chatId),
+    keyword,
+    page,
+    page_size: pageSize,
+    total,
+    items: items.slice(start, end),
+  };
+}
+
+function resolveGroupRecord(payload: unknown, chatId: string): Record<string, unknown> | null {
+  const root = asObjectRecord(payload);
+  if (!root) {
+    return null;
+  }
+  const normalizedChatId = normalizeResultChatId(chatId);
+  const mapId = normalizedChatId.replace(/^g_/i, "");
+  const byChatId = asObjectRecord(root[normalizedChatId]);
+  if (byChatId) {
+    return byChatId;
+  }
+  const byMapId = asObjectRecord(root[mapId]);
+  if (byMapId) {
+    return byMapId;
+  }
+  for (const value of Object.values(root)) {
+    const record = asObjectRecord(value);
+    if (record) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function normalizeResultChatId(value: unknown): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.startsWith("g_")) {
+    return normalized;
+  }
+  return normalized.startsWith("chat:") ? normalized.slice(5) : normalized;
+}
+
+function asObjectRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toOptionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function toNonZeroString(value: unknown): string | undefined {
+  const normalized = toOptionalString(value);
+  if (!normalized || normalized === "0") {
+    return undefined;
+  }
+  return normalized;
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function parsePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = toOptionalNumber(value);
+  if (!parsed || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
 }
 
 async function handleGenerateAudioAction(
