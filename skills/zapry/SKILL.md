@@ -173,6 +173,14 @@ triggers_api:
 - `set-chat-title`：`chat_id`, `title`
 - `set-chat-description`：`chat_id`, `description`
 
+#### 群管理执行补充（必须遵守）
+
+- `mute-chat-member` **只支持** `mute=true/false`；不支持 `until_date` / duration（10 分钟、1 小时、24 小时等）。
+- 禁止向用户提供时长选项（如“10分钟/1小时/24小时/永久”）并要求二选一。
+- 当上下文里有 `TargetUserId` / `TargetUserHints` / `MentionedUserIds` 时，优先直接使用这些 `user_id` 执行。
+- 若只有一个候选 `user_id`，不要再追问“用户ID是多少”，直接执行即可。
+- 只有在没有可用候选 `user_id` 时，才引导用户 `@` 目标用户或回复目标用户消息来补充定位。
+
 ### Agent Self Management
 
 - `get-me`：无参

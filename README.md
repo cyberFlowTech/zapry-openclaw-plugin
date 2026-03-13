@@ -96,6 +96,11 @@ This plugin follows the API reference 1:1. Prefer documented parameter names in 
 
 Common camelCase aliases are still accepted (`chatId`, `userId`, `messageId`, `dynamicId`, `clubId`, `pageSize`, `languageCode`), but snake_case is canonical.
 
+Group moderation note:
+
+- `mute-chat-member` only supports `mute` boolean (`true` mute / `false` unmute).
+- Duration fields like `until_date` / `duration` are not supported by current API contract.
+
 Media source constraint (important):
 
 - For media send actions, use only `data:` URI or `/_temp/media/...` (or absolute URL ending with `/_temp/media/...`).

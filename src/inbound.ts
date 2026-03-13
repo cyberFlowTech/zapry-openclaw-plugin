@@ -62,11 +62,20 @@ type ParsedInboundMessage = {
   mediaItems: ParsedInboundMediaItem[];
   senderId: string;
   senderName?: string;
+  targetUserHints: InboundTargetUserHint[];
   chatId: string;
   chatType?: string;
   isGroup: boolean;
   messageSid: string;
   timestampMs?: number;
+};
+
+type InboundTargetUserHint = {
+  userId: string;
+  username?: string;
+  displayName?: string;
+  source: "reply_to_message" | "text_mention" | "mention_entity" | "mentioned_users";
+  raw?: string;
 };
 
 type ResolvedInboundFile = {
@@ -129,6 +138,32 @@ function parseFiniteNumber(value: unknown): number | undefined {
     }
   }
   return undefined;
+}
+
+function asNonNegativeInteger(value: unknown): number | undefined {
+  const num = parseFiniteNumber(value);
+  if (num === undefined) {
+    return undefined;
+  }
+  const int = Math.floor(num);
+  return int >= 0 ? int : undefined;
+}
+
+function extractTextByEntityRange(
+  text: string | undefined,
+  offset: unknown,
+  length: unknown,
+): string | undefined {
+  if (!text) {
+    return undefined;
+  }
+  const start = asNonNegativeInteger(offset);
+  const size = asNonNegativeInteger(length);
+  if (start === undefined || size === undefined || size <= 0 || start >= text.length) {
+    return undefined;
+  }
+  const end = Math.min(text.length, start + size);
+  return asNonEmptyString(text.slice(start, end));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -200,6 +235,7 @@ function resolveCommandBody(
   sourceText: string | undefined,
   mediaItems: ParsedInboundMediaItem[],
   transcript?: string,
+  targetUserHints: InboundTargetUserHint[] = [],
 ): string {
   const hasMedia = mediaItems.length > 0;
   const hasStagedMedia = mediaItems.some((item) => Boolean(item.stagedPath));
@@ -219,17 +255,39 @@ function resolveCommandBody(
 
   const normalizedText = sourceText?.trim();
   const transcriptRequested = isExplicitTranscriptRequest(normalizedText);
+  const moderationIntent = isLikelyModerationIntent(normalizedText);
+  const moderationGuidance = (() => {
+    if (!moderationIntent) {
+      return "";
+    }
+    const lines: string[] = [
+      "群管理执行规则：",
+      "- `mute-chat-member` 仅支持 `mute=true/false`，不支持 `until_date` 或时长参数。",
+      "- 禁止向用户提供“10分钟/1小时/24小时/永久”等时长选项。",
+    ];
+    if (targetUserHints.length === 1) {
+      lines.push(`- 已解析目标用户 user_id=${targetUserHints[0].userId}，可直接执行。`);
+    } else if (targetUserHints.length > 1) {
+      lines.push("- 已解析到多个候选 user_id，请按用户提及对象选择最匹配的目标：");
+      for (const hint of targetUserHints.slice(0, 5)) {
+        lines.push(`  - ${summarizeTargetUserHint(hint)}`);
+      }
+    } else {
+      lines.push("- 当前未解析到目标 user_id，优先让用户 @目标用户 或回复目标用户消息。");
+    }
+    return lines.join("\n");
+  })();
   if (normalizedText) {
     if (hasAudioLikeMedia) {
       if (transcript?.trim()) {
         if (transcriptRequested) {
-          return `用户要求：${normalizedText}\n当前轮真实转写文本：${transcript}\n用户明确要求转写/转文字时，优先直接输出上述真实转写文本；禁止根据历史上下文或主观猜测改写内容。`;
+          return `用户要求：${normalizedText}\n当前轮真实转写文本：${transcript}\n用户明确要求转写/转文字时，优先直接输出上述真实转写文本；禁止根据历史上下文或主观猜测改写内容。${moderationGuidance ? `\n${moderationGuidance}` : ""}`;
         }
-        return `用户要求：${normalizedText}\n当前轮真实转写文本（仅供理解，不要默认回显给用户）：${transcript}\n请把该转写视为用户本轮真实语音输入，直接回答用户意图；除非用户明确要求转写/逐字稿，否则不要回显转写文本。`;
+        return `用户要求：${normalizedText}\n当前轮真实转写文本（仅供理解，不要默认回显给用户）：${transcript}\n请把该转写视为用户本轮真实语音输入，直接回答用户意图；除非用户明确要求转写/逐字稿，否则不要回显转写文本。${moderationGuidance ? `\n${moderationGuidance}` : ""}`;
       }
-      return `${normalizedText}\n当前轮语音/音频尚未拿到真实转写文本。禁止根据用户追问文本、历史上下文或主观猜测编造语音内容；只能明确说明当前无法完成真实转写。`;
+      return `${normalizedText}\n当前轮语音/音频尚未拿到真实转写文本。禁止根据用户追问文本、历史上下文或主观猜测编造语音内容；只能明确说明当前无法完成真实转写。${moderationGuidance ? `\n${moderationGuidance}` : ""}`;
     }
-    return normalizedText;
+    return moderationGuidance ? `${normalizedText}\n${moderationGuidance}` : normalizedText;
   }
   if (!mediaItems.length) {
     return "";
@@ -893,6 +951,266 @@ function extractInboundMediaItems(message: Record<string, unknown>): ParsedInbou
   return items;
 }
 
+function resolveUserIdFromRecord(record: Record<string, unknown> | null): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value =
+    record.id ??
+    record.user_id ??
+    record.userId ??
+    record.uid ??
+    record.member_id ??
+    record.memberId;
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return asNonEmptyString(String(value));
+}
+
+function normalizeUsername(value: unknown): string | undefined {
+  const username = asNonEmptyString(typeof value === "string" ? value : value != null ? String(value) : undefined);
+  if (!username) {
+    return undefined;
+  }
+  return username.replace(/^@+/, "");
+}
+
+function resolveDisplayNameFromRecord(record: Record<string, unknown> | null): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const fullName =
+    asNonEmptyString(typeof record.name === "string" ? record.name : undefined) ??
+    asNonEmptyString(typeof record.display_name === "string" ? record.display_name : undefined) ??
+    asNonEmptyString(typeof record.displayName === "string" ? record.displayName : undefined) ??
+    asNonEmptyString(typeof record.nick === "string" ? record.nick : undefined) ??
+    asNonEmptyString(typeof record.nickname === "string" ? record.nickname : undefined);
+  if (fullName) {
+    return fullName;
+  }
+
+  const firstName = asNonEmptyString(
+    typeof record.first_name === "string" ? record.first_name : typeof record.firstName === "string" ? record.firstName : undefined,
+  );
+  const lastName = asNonEmptyString(
+    typeof record.last_name === "string" ? record.last_name : typeof record.lastName === "string" ? record.lastName : undefined,
+  );
+  const joined = [firstName, lastName].filter(Boolean).join(" ").trim();
+  return joined || undefined;
+}
+
+function extractTargetUserHints(
+  message: Record<string, unknown>,
+  sourceText?: string,
+): InboundTargetUserHint[] {
+  const hints = new Map<string, InboundTargetUserHint>();
+  const sourcePriority: Record<InboundTargetUserHint["source"], number> = {
+    reply_to_message: 4,
+    text_mention: 3,
+    mention_entity: 2,
+    mentioned_users: 1,
+  };
+
+  const pushHint = (hint: InboundTargetUserHint): void => {
+    const userId = asNonEmptyString(hint.userId);
+    if (!userId) {
+      return;
+    }
+    const normalizedHint: InboundTargetUserHint = {
+      ...hint,
+      userId,
+      username: normalizeUsername(hint.username),
+      displayName: asNonEmptyString(hint.displayName),
+      raw: asNonEmptyString(hint.raw),
+    };
+    const existing = hints.get(userId);
+    if (!existing) {
+      hints.set(userId, normalizedHint);
+      return;
+    }
+    const shouldUpgradeSource = sourcePriority[normalizedHint.source] > sourcePriority[existing.source];
+    hints.set(userId, {
+      userId,
+      source: shouldUpgradeSource ? normalizedHint.source : existing.source,
+      username: existing.username ?? normalizedHint.username,
+      displayName: existing.displayName ?? normalizedHint.displayName,
+      raw: existing.raw ?? normalizedHint.raw,
+    });
+  };
+
+  const replyMessage = asRecord(message.reply_to_message ?? message.replyToMessage);
+  if (replyMessage) {
+    const replyFrom = asRecord(replyMessage.from ?? replyMessage.sender ?? replyMessage.user);
+    const replyUserId =
+      resolveUserIdFromRecord(replyFrom) ??
+      asNonEmptyString(
+        replyMessage.sender_id != null
+          ? String(replyMessage.sender_id)
+          : replyMessage.from_id != null
+            ? String(replyMessage.from_id)
+            : replyMessage.user_id != null
+              ? String(replyMessage.user_id)
+              : undefined,
+      );
+    if (replyUserId) {
+      pushHint({
+        userId: replyUserId,
+        username: normalizeUsername(replyFrom?.username ?? replyMessage.sender_username),
+        displayName:
+          resolveDisplayNameFromRecord(replyFrom) ??
+          asNonEmptyString(
+            typeof replyMessage.sender_name === "string"
+              ? replyMessage.sender_name
+              : typeof replyMessage.senderName === "string"
+                ? replyMessage.senderName
+                : undefined,
+          ),
+        source: "reply_to_message",
+        raw: "reply_to_message",
+      });
+    }
+  }
+
+  const entities: unknown[] = [];
+  if (Array.isArray(message.entities)) {
+    entities.push(...message.entities);
+  }
+  if (Array.isArray(message.caption_entities)) {
+    entities.push(...message.caption_entities);
+  }
+
+  for (const entityRaw of entities) {
+    const entity = asRecord(entityRaw);
+    if (!entity) {
+      continue;
+    }
+    const type = asNonEmptyString(entity.type)?.toLowerCase();
+    if (type !== "text_mention" && type !== "mention") {
+      continue;
+    }
+    const entityUser = asRecord(entity.user ?? entity.from_user ?? entity.sender ?? entity.member);
+    const entityUserId =
+      resolveUserIdFromRecord(entityUser) ??
+      asNonEmptyString(
+        entity.user_id != null
+          ? String(entity.user_id)
+          : entity.userId != null
+            ? String(entity.userId)
+            : entity.uid != null
+              ? String(entity.uid)
+              : undefined,
+      );
+    if (!entityUserId) {
+      continue;
+    }
+    pushHint({
+      userId: entityUserId,
+      username: normalizeUsername(entityUser?.username),
+      displayName: resolveDisplayNameFromRecord(entityUser),
+      source: type === "text_mention" ? "text_mention" : "mention_entity",
+      raw: extractTextByEntityRange(sourceText, entity.offset, entity.length),
+    });
+  }
+
+  const mentionArrayFields = [
+    "mentioned_users",
+    "mentionedUsers",
+    "mentions",
+    "at_users",
+    "atUsers",
+    "at_list",
+    "atList",
+  ];
+  for (const field of mentionArrayFields) {
+    const rawValue = message[field];
+    if (!Array.isArray(rawValue)) {
+      continue;
+    }
+    for (const entry of rawValue) {
+      const record = asRecord(entry);
+      if (!record) {
+        continue;
+      }
+      const userId =
+        resolveUserIdFromRecord(record) ??
+        asNonEmptyString(record.member != null ? String(record.member) : undefined);
+      if (!userId) {
+        continue;
+      }
+      pushHint({
+        userId,
+        username: normalizeUsername(record.username ?? record.user_name),
+        displayName: resolveDisplayNameFromRecord(record),
+        source: "mentioned_users",
+        raw:
+          asNonEmptyString(typeof record.text === "string" ? record.text : undefined) ??
+          asNonEmptyString(typeof record.name === "string" ? record.name : undefined),
+      });
+    }
+  }
+
+  const mentionSingleFields = [
+    "target_user_id",
+    "targetUserId",
+    "mentioned_user_id",
+    "mentionedUserId",
+    "reply_user_id",
+    "replyUserId",
+  ];
+  for (const field of mentionSingleFields) {
+    const value = message[field];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const userId = asNonEmptyString(String(value));
+    if (!userId) {
+      continue;
+    }
+    pushHint({
+      userId,
+      source: "mentioned_users",
+      raw: field,
+    });
+  }
+
+  return Array.from(hints.values());
+}
+
+function summarizeTargetUserHint(hint: InboundTargetUserHint): string {
+  const parts = [`user_id=${hint.userId}`];
+  if (hint.displayName) {
+    parts.push(`name=${hint.displayName}`);
+  }
+  if (hint.username) {
+    parts.push(`username=@${hint.username}`);
+  }
+  parts.push(`source=${hint.source}`);
+  if (hint.raw) {
+    parts.push(`raw=${hint.raw}`);
+  }
+  return parts.join(" | ");
+}
+
+function isLikelyModerationIntent(text: string | undefined): boolean {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "禁言",
+    "解禁",
+    "踢",
+    "移出群",
+    "封禁",
+    "mute",
+    "unmute",
+    "kick",
+    "ban",
+    "restrict",
+  ].some((token) => normalized.includes(token));
+}
+
 function summarizeMediaItem(item: ParsedInboundMediaItem): string {
   const parts: string[] = [item.kind];
   if (item.sourceTag === "video-thumb") {
@@ -936,11 +1254,37 @@ function buildInboundBody(
   sourceText: string | undefined,
   mediaItems: ParsedInboundMediaItem[],
   transcript?: string,
+  targetUserHints: InboundTargetUserHint[] = [],
 ): string {
   const normalizedText = sourceText?.trim();
   const transcriptRequested = isExplicitTranscriptRequest(normalizedText);
   if (!mediaItems.length) {
-    return normalizedText ?? "";
+    if (!normalizedText && targetUserHints.length === 0) {
+      return "";
+    }
+    if (targetUserHints.length === 0) {
+      return normalizedText ?? "";
+    }
+    const lines: string[] = [];
+    if (normalizedText) {
+      lines.push(normalizedText, "");
+    } else {
+      lines.push("收到一条文本消息。", "");
+    }
+    lines.push("[群管理目标候选]");
+    for (const hint of targetUserHints) {
+      lines.push(`- ${summarizeTargetUserHint(hint)}`);
+    }
+    lines.push(
+      "- 若本轮涉及禁言/移出群，优先使用上述 user_id，避免再次向用户索要 ID。",
+      "- `mute-chat-member` 仅支持 `mute=true/false`，不支持时长参数。",
+      "",
+      "[群管理目标结构化数据]",
+      "```json",
+      JSON.stringify({ targetUsers: targetUserHints }, null, 2),
+      "```",
+    );
+    return lines.join("\n");
   }
   const stageErrors = mediaItems
     .map((item) => item.stageError)
@@ -967,6 +1311,14 @@ function buildInboundBody(
     lines.push("- 禁止只回复“我已收到”“我现在开始转写”“稍后给你结果”之类进度说明。");
   }
   lines.push("- 只有在媒体本体下载失败或权限失败时，才向用户说明并请求重试。", "");
+
+  if (targetUserHints.length > 0) {
+    lines.push("[群管理目标候选]");
+    for (const hint of targetUserHints) {
+      lines.push(`- ${summarizeTargetUserHint(hint)}`);
+    }
+    lines.push("- 若本轮涉及禁言/移出群，优先使用上述 user_id，避免再次向用户索要 ID。", "");
+  }
 
   const keyframeItems = mediaItems.filter((item) => item.sourceTag === "video-keyframe");
   if (keyframeItems.length > 0) {
@@ -1032,7 +1384,11 @@ function buildInboundBody(
     lines.push(`- ${summarizeMediaItem(item)}`);
   }
 
-  lines.push("", "[媒体结构化数据]", "```json", JSON.stringify({ media: mediaItems }, null, 2), "```");
+  const structuredPayload: Record<string, unknown> = { media: mediaItems };
+  if (targetUserHints.length > 0) {
+    structuredPayload.targetUsers = targetUserHints;
+  }
+  lines.push("", "[媒体结构化数据]", "```json", JSON.stringify(structuredPayload, null, 2), "```");
   return lines.join("\n");
 }
 
@@ -1044,6 +1400,7 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
 
   const sourceText = asNonEmptyString(message.text) ?? asNonEmptyString(message.caption);
   const mediaItems = extractInboundMediaItems(message);
+  const targetUserHints = extractTargetUserHints(message, sourceText);
   if (!sourceText && mediaItems.length === 0) {
     return null;
   }
@@ -1085,6 +1442,7 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     mediaItems,
     senderId,
     senderName,
+    targetUserHints,
     chatId,
     chatType,
     isGroup,
@@ -1376,11 +1734,21 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   const finalizedMediaItems = await appendVideoKeyframeItems(runtime, stagedMediaItems, log);
   const { mediaItems, transcript } = await transcribeInboundAudioItems(runtime, cfg, finalizedMediaItems, log);
   const agentMediaItems = sanitizeMediaItemsForAgent(mediaItems);
-  const rawBody = buildInboundBody(parsed.sourceText, agentMediaItems, transcript);
+  const rawBody = buildInboundBody(
+    parsed.sourceText,
+    agentMediaItems,
+    transcript,
+    parsed.targetUserHints,
+  );
   if (!rawBody) {
     return false;
   }
-  const commandBody = resolveCommandBody(parsed.sourceText, mediaItems, transcript);
+  const commandBody = resolveCommandBody(
+    parsed.sourceText,
+    mediaItems,
+    transcript,
+    parsed.targetUserHints,
+  );
   const stagedMedia = mediaItems.flatMap((item) =>
     item.stagedPath
       ? [
@@ -1450,6 +1818,11 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     ConversationLabel: fromLabel,
     SenderName: parsed.senderName || undefined,
     SenderId: parsed.senderId,
+    TargetUserHints: parsed.targetUserHints.length > 0 ? parsed.targetUserHints : undefined,
+    MentionedUserIds:
+      parsed.targetUserHints.length > 0 ? parsed.targetUserHints.map((item) => item.userId) : undefined,
+    TargetUserId:
+      parsed.targetUserHints.length === 1 ? parsed.targetUserHints[0].userId : undefined,
     Provider: "zapry",
     Surface: "zapry",
     MessageSid: parsed.messageSid,

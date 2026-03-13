@@ -648,7 +648,16 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const params = { ...(raw ?? {}) };
 
   const chatId = pickFirst(params, ["chat_id", "chatId", "chat", "to"]);
-  const userId = pickFirst(params, ["user_id", "userId"]);
+  const userId = pickFirst(params, [
+    "user_id",
+    "userId",
+    "target_user_id",
+    "targetUserId",
+    "mentioned_user_id",
+    "mentionedUserId",
+    "reply_user_id",
+    "replyUserId",
+  ]);
   const messageId = pickFirst(params, ["message_id", "messageId"]);
   const callbackQueryId = pickFirst(params, ["callback_query_id", "callbackQueryId"]);
   const fileId = pickFirst(params, ["file_id", "fileId"]);
