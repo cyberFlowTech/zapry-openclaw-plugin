@@ -17,6 +17,8 @@ type RuntimeLog = {
 
 type StatusSink = (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
 
+type MuteCommandIntent = "mute" | "unmute";
+
 type ProcessInboundParams = {
   account: ResolvedZapryAccount;
   cfg?: any;
@@ -78,6 +80,22 @@ type InboundTargetUserHint = {
   raw?: string;
 };
 
+type GroupMemberCandidate = {
+  userId: string;
+  displayName: string;
+  username?: string;
+  nick?: string;
+  groupNick?: string;
+};
+
+type PendingMuteConfirmation = {
+  chatId: string;
+  senderId: string;
+  intent: MuteCommandIntent;
+  target: InboundTargetUserHint;
+  createdAtMs: number;
+};
+
 type ResolvedInboundFile = {
   fileId: string;
   downloadUrl?: string;
@@ -96,6 +114,7 @@ const INBOUND_AUDIO_TRANSCRIBE_TIMEOUT_MS = 20000;
 const INBOUND_VIDEO_POSTER_TIMEOUT_MS = 12000;
 const INBOUND_VIDEO_KEYFRAME_TIMEOUT_MS = 30000;
 const INBOUND_VIDEO_MAX_KEYFRAMES = 8;
+const PENDING_MUTE_CONFIRMATION_TTL_MS = 3 * 60 * 1000;
 const INBOUND_MEDIA_MAX_BYTES_BY_KIND: Record<ParsedInboundMediaKind, number> = {
   photo: 25 * 1024 * 1024,
   video: 100 * 1024 * 1024,
@@ -104,6 +123,7 @@ const INBOUND_MEDIA_MAX_BYTES_BY_KIND: Record<ParsedInboundMediaKind, number> = 
   voice: 25 * 1024 * 1024,
   animation: 25 * 1024 * 1024,
 };
+const pendingMuteConfirmations = new Map<string, PendingMuteConfirmation>();
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -1224,6 +1244,434 @@ function isLikelyModerationIntent(text: string | undefined): boolean {
   ].some((token) => normalized.includes(token));
 }
 
+function resolveMuteCommandIntent(text: string | undefined): MuteCommandIntent | null {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  const unmuteTokens = ["解除禁言", "取消禁言", "解禁", "unmute", "解除封禁", "取消封禁"];
+  if (unmuteTokens.some((token) => normalized.includes(token))) {
+    return "unmute";
+  }
+  const muteTokens = ["禁言", "mute", "封禁", "闭麦"];
+  if (muteTokens.some((token) => normalized.includes(token))) {
+    return "mute";
+  }
+  return null;
+}
+
+function isLikelyMuteCommandMessage(
+  text: string | undefined,
+  targetUserHints: InboundTargetUserHint[],
+): boolean {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (!resolveMuteCommandIntent(normalized)) {
+    return false;
+  }
+  if (targetUserHints.length > 0) {
+    return true;
+  }
+  const discussionTokens = [
+    "体验",
+    "方案",
+    "文档",
+    "规则",
+    "策略",
+    "为什么",
+    "怎么",
+    "支持",
+    "接口",
+    "参数",
+    "提示词",
+  ];
+  if (discussionTokens.some((token) => normalized.includes(token))) {
+    return false;
+  }
+  return [
+    "把",
+    "将",
+    "请",
+    "帮",
+    "麻烦",
+    "执行",
+    "试试",
+    "处理",
+    "@",
+    "/mute",
+    "/unmute",
+  ].some((token) => normalized.includes(token));
+}
+
+function buildPendingMuteConfirmationKey(chatId: string, senderId: string): string {
+  return `${chatId}::${senderId}`;
+}
+
+function clearPendingMuteConfirmation(chatId: string, senderId: string): void {
+  pendingMuteConfirmations.delete(buildPendingMuteConfirmationKey(chatId, senderId));
+}
+
+function getPendingMuteConfirmation(chatId: string, senderId: string): PendingMuteConfirmation | null {
+  const key = buildPendingMuteConfirmationKey(chatId, senderId);
+  const pending = pendingMuteConfirmations.get(key);
+  if (!pending) {
+    return null;
+  }
+  if (Date.now() - pending.createdAtMs > PENDING_MUTE_CONFIRMATION_TTL_MS) {
+    pendingMuteConfirmations.delete(key);
+    return null;
+  }
+  return pending;
+}
+
+function setPendingMuteConfirmation(pending: PendingMuteConfirmation): void {
+  pendingMuteConfirmations.set(
+    buildPendingMuteConfirmationKey(pending.chatId, pending.senderId),
+    pending,
+  );
+}
+
+function resolveMuteConfirmationDecision(text: string | undefined): "confirm" | "cancel" | null {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (
+    [
+      "取消",
+      "取消操作",
+      "取消执行",
+      "算了",
+      "不是他",
+      "不对",
+      "cancel",
+      "no",
+    ].some((token) => normalized === token || normalized.includes(token))
+  ) {
+    return "cancel";
+  }
+  if (
+    [
+      "确认",
+      "确认执行",
+      "确认禁言",
+      "确认解禁",
+      "确认解除禁言",
+      "执行",
+      "执行吧",
+      "就他",
+      "是他",
+      "yes",
+      "ok",
+      "okay",
+    ].some((token) => normalized === token || normalized.includes(token))
+  ) {
+    return "confirm";
+  }
+  return null;
+}
+
+function normalizeLookupToken(value: string | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, "")
+    .replace(/[\s"'`“”‘’]/g, "");
+}
+
+function extractTargetKeywordFromMuteText(text: string | undefined): string | null {
+  const normalized = text?.trim();
+  if (!normalized) {
+    return null;
+  }
+  const lower = normalized.toLowerCase();
+  const actionTokens = ["解除禁言", "取消禁言", "解禁", "unmute", "禁言", "mute", "封禁", "闭麦"];
+  let actionIndex = -1;
+  for (const token of actionTokens) {
+    const idx = lower.indexOf(token);
+    if (idx >= 0 && (actionIndex < 0 || idx < actionIndex)) {
+      actionIndex = idx;
+    }
+  }
+  if (actionIndex < 0) {
+    return null;
+  }
+
+  let left = normalized.slice(0, actionIndex).trim();
+  left = left.replace(/^@[^ \t\r\n]+\s+/u, "").trim();
+  const markerIndex = Math.max(left.lastIndexOf("把"), left.lastIndexOf("将"), left.lastIndexOf("给"));
+  if (markerIndex >= 0) {
+    left = left.slice(markerIndex + 1).trim();
+  }
+  left = left
+    .replace(/^(本群里|这个群里|这群里|群里|群中)/, "")
+    .replace(/[：:，,。.!！?？]+$/g, "")
+    .replace(/^["'`“‘]+|["'`”’]+$/g, "")
+    .replace(/(给|一下|先|直接|立刻|马上)$/g, "")
+    .trim();
+  if (left.startsWith("@")) {
+    left = left.slice(1).trim();
+  }
+  if (!left) {
+    const atMatch = normalized.match(/@([^\s，,。.!！？?]+)/u);
+    if (atMatch?.[1]) {
+      left = atMatch[1].trim();
+    }
+  }
+  if (!left || normalizeLookupToken(left).length < 2) {
+    return null;
+  }
+  return left;
+}
+
+function toUserIdString(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  if (!normalized || normalized === "0") {
+    return undefined;
+  }
+  return normalized;
+}
+
+function parseGroupMemberCandidate(
+  rawKey: string | undefined,
+  rawValue: unknown,
+): GroupMemberCandidate | null {
+  const record = asRecord(rawValue);
+  if (!record) {
+    return null;
+  }
+
+  const userId = toUserIdString(
+    record.Id ??
+      record.id ??
+      record.user_id ??
+      record.userId ??
+      record.uid ??
+      rawKey,
+  );
+  if (!userId) {
+    return null;
+  }
+
+  const groupNick = asNonEmptyString(
+    typeof record.Gnick === "string"
+      ? record.Gnick
+      : typeof record.gnick === "string"
+        ? record.gnick
+        : typeof record.group_nick === "string"
+          ? record.group_nick
+          : typeof record.groupNick === "string"
+            ? record.groupNick
+            : undefined,
+  );
+  const nick = asNonEmptyString(
+    typeof record.Nick === "string"
+      ? record.Nick
+      : typeof record.nick === "string"
+        ? record.nick
+        : typeof record.name === "string"
+          ? record.name
+          : typeof record.display_name === "string"
+            ? record.display_name
+            : typeof record.displayName === "string"
+              ? record.displayName
+              : undefined,
+  );
+  const username = normalizeUsername(
+    record.Username ??
+      record.username ??
+      record.user_name ??
+      record.userName,
+  );
+  const displayName = groupNick ?? nick ?? (username ? `@${username}` : `用户(${userId})`);
+  return {
+    userId,
+    displayName,
+    username,
+    nick: nick ?? undefined,
+    groupNick: groupNick ?? undefined,
+  };
+}
+
+function extractGroupMemberCandidates(payload: unknown): GroupMemberCandidate[] {
+  const byUserId = new Map<string, GroupMemberCandidate>();
+  const visited = new Set<object>();
+
+  const upsertCandidate = (candidate: GroupMemberCandidate | null): void => {
+    if (!candidate) {
+      return;
+    }
+    const existing = byUserId.get(candidate.userId);
+    if (!existing) {
+      byUserId.set(candidate.userId, candidate);
+      return;
+    }
+    byUserId.set(candidate.userId, {
+      ...existing,
+      displayName:
+        existing.displayName.startsWith("用户(") && !candidate.displayName.startsWith("用户(")
+          ? candidate.displayName
+          : existing.displayName,
+      username: existing.username ?? candidate.username,
+      nick: existing.nick ?? candidate.nick,
+      groupNick: existing.groupNick ?? candidate.groupNick,
+    });
+  };
+
+  const parseMemberContainer = (container: unknown): void => {
+    if (Array.isArray(container)) {
+      for (const entry of container) {
+        upsertCandidate(parseGroupMemberCandidate(undefined, entry));
+      }
+      return;
+    }
+    const record = asRecord(container);
+    if (!record) {
+      return;
+    }
+    for (const [rawKey, rawValue] of Object.entries(record)) {
+      upsertCandidate(parseGroupMemberCandidate(rawKey, rawValue));
+    }
+  };
+
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 5) {
+      return;
+    }
+    const record = asRecord(node);
+    if (!record) {
+      return;
+    }
+    if (visited.has(record)) {
+      return;
+    }
+    visited.add(record);
+
+    const membersNodeCandidates = [
+      record.Member,
+      record.member,
+      asRecord(record.Members)?.Member,
+      asRecord(record.Members)?.member,
+      asRecord(record.members)?.Member,
+      asRecord(record.members)?.member,
+    ];
+    for (const candidate of membersNodeCandidates) {
+      parseMemberContainer(candidate);
+    }
+
+    for (const value of Object.values(record)) {
+      if (value && typeof value === "object") {
+        walk(value, depth + 1);
+      }
+    }
+  };
+
+  walk(payload, 0);
+  return Array.from(byUserId.values());
+}
+
+function scoreGroupMemberCandidate(
+  candidate: GroupMemberCandidate,
+  keyword: string,
+  senderId: string,
+): number {
+  const token = normalizeLookupToken(keyword);
+  if (!token) {
+    return 0;
+  }
+  const names = [
+    candidate.displayName,
+    candidate.groupNick,
+    candidate.nick,
+    candidate.username,
+    candidate.userId,
+  ];
+  let score = 0;
+  for (const rawName of names) {
+    const name = normalizeLookupToken(rawName);
+    if (!name) {
+      continue;
+    }
+    if (name === token) {
+      score = Math.max(score, 120);
+      continue;
+    }
+    if (name.startsWith(token)) {
+      score = Math.max(score, 105);
+      continue;
+    }
+    if (token.startsWith(name) && name.length >= 2) {
+      score = Math.max(score, 95);
+      continue;
+    }
+    if (name.includes(token)) {
+      score = Math.max(score, 85);
+      continue;
+    }
+    if (token.includes(name) && name.length >= 2) {
+      score = Math.max(score, 75);
+    }
+  }
+  if (candidate.userId === senderId) {
+    score -= 20;
+  }
+  return score;
+}
+
+async function lookupMuteTargetCandidateFromGroupMembers(params: {
+  client: ZapryApiClient;
+  parsed: ParsedInboundMessage;
+  intent: MuteCommandIntent;
+  log?: RuntimeLog;
+}): Promise<InboundTargetUserHint | null> {
+  const keyword = extractTargetKeywordFromMuteText(params.parsed.sourceText);
+  if (!keyword) {
+    return null;
+  }
+
+  try {
+    const resp = await params.client.getChatAdministrators(params.parsed.chatId);
+    if (!resp?.ok) {
+      params.log?.warn?.(
+        `[zapry] member lookup failed for chat ${params.parsed.chatId}: ${resp?.description ?? "unknown"}`,
+      );
+      return null;
+    }
+    const candidates = extractGroupMemberCandidates(resp.result);
+    if (!candidates.length) {
+      return null;
+    }
+    const scored = candidates
+      .map((candidate) => ({
+        candidate,
+        score: scoreGroupMemberCandidate(candidate, keyword, params.parsed.senderId),
+      }))
+      .sort((a, b) => b.score - a.score);
+    if (!scored[0] || scored[0].score < 80) {
+      return null;
+    }
+
+    const top = scored[0].candidate;
+    return {
+      userId: top.userId,
+      username: top.username,
+      displayName: top.displayName,
+      source: "mentioned_users",
+      raw: `member_lookup:${keyword}`,
+    };
+  } catch (error) {
+    params.log?.warn?.(
+      `[zapry] member lookup threw for chat ${params.parsed.chatId}: ${String(error)}`,
+    );
+    return null;
+  }
+}
+
 function isLikelyAudioGenerationIntent(text: string | undefined): boolean {
   const normalized = text?.trim().toLowerCase();
   if (!normalized) {
@@ -1245,6 +1693,258 @@ function isLikelyAudioGenerationIntent(text: string | undefined): boolean {
     "ringtone",
     "render audio",
   ].some((token) => normalized.includes(token));
+}
+
+function formatMuteTargetLabel(hint: InboundTargetUserHint): string {
+  if (hint.displayName?.trim()) {
+    return `“${hint.displayName.trim()}”`;
+  }
+  if (hint.username?.trim()) {
+    return `@${hint.username.trim()}`;
+  }
+  return `用户(${hint.userId})`;
+}
+
+function getMuteActionLabel(intent: MuteCommandIntent): string {
+  return intent === "mute" ? "禁言" : "解除禁言";
+}
+
+function buildMuteTargetMissingText(intent: MuteCommandIntent): string {
+  const action = getMuteActionLabel(intent);
+  return `我还没定位到目标成员。请直接 @ 目标成员，或回复目标成员那条消息后再发“${action}”。`;
+}
+
+function buildMuteCandidateConfirmText(
+  intent: MuteCommandIntent,
+  targetHint: InboundTargetUserHint,
+): string {
+  const confirmPhrase = intent === "mute" ? "确认禁言" : "确认解除禁言";
+  const label = formatMuteTargetLabel(targetHint);
+  return `我在本群匹配到候选成员：${label}（user_id: ${targetHint.userId}）。回复“${confirmPhrase}”执行，回复“取消”结束。`;
+}
+
+function buildMuteCancelText(intent: MuteCommandIntent): string {
+  return `已取消本次${getMuteActionLabel(intent)}操作。`;
+}
+
+function buildMuteDisambiguationText(
+  intent: MuteCommandIntent,
+  targetUserHints: InboundTargetUserHint[],
+): string {
+  const action = getMuteActionLabel(intent);
+  const candidateText = targetUserHints
+    .slice(0, 3)
+    .map((hint) => formatMuteTargetLabel(hint))
+    .join("、");
+  if (!candidateText) {
+    return `识别到多个候选成员，暂不执行以避免误操作。请直接 @ 目标成员，或回复其消息后再发“${action}”。`;
+  }
+  return `识别到多个候选成员（${candidateText}），暂不执行以避免误操作。请直接 @ 目标成员，或回复其消息后再发“${action}”。`;
+}
+
+function buildMuteSuccessText(intent: MuteCommandIntent, targetHint: InboundTargetUserHint): string {
+  const label = formatMuteTargetLabel(targetHint);
+  return intent === "mute" ? `已将${label}禁言。` : `已解除${label}禁言。`;
+}
+
+function buildMuteFailureText(intent: MuteCommandIntent, errorCode?: number, description?: string): string {
+  if (errorCode === 403) {
+    return "操作失败：我还没有群管理权限，请先把我设为管理员后重试。";
+  }
+  if (errorCode === 429) {
+    return "操作过于频繁，请稍后再试。";
+  }
+  const normalizedDesc = description?.toLowerCase() ?? "";
+  if (errorCode === 404 || normalizedDesc.includes("not found")) {
+    return "操作失败：未找到目标成员，请重新 @ 该成员后再试。";
+  }
+  return `操作失败：${getMuteActionLabel(intent)}未成功，请稍后重试。`;
+}
+
+async function sendModerationQuickReply(params: {
+  account: ResolvedZapryAccount;
+  chatId: string;
+  text: string;
+  statusSink?: StatusSink;
+  log?: RuntimeLog;
+}): Promise<boolean> {
+  const { account, chatId, text, statusSink, log } = params;
+  const result = await sendMessageZapry(account, `chat:${chatId}`, text);
+  if (!result.ok) {
+    log?.warn?.(
+      `[${account.accountId}] moderation quick reply failed: ${result.error ?? "unknown"}`,
+    );
+    return false;
+  }
+  statusSink?.({ lastOutboundAt: Date.now() });
+  return true;
+}
+
+async function executeMuteCommandWithTarget(params: {
+  client: ZapryApiClient;
+  account: ResolvedZapryAccount;
+  parsed: ParsedInboundMessage;
+  intent: MuteCommandIntent;
+  targetHint: InboundTargetUserHint;
+  statusSink?: StatusSink;
+  log?: RuntimeLog;
+}): Promise<boolean> {
+  const { client, account, parsed, intent, targetHint, statusSink, log } = params;
+  try {
+    const resp = await client.muteChatMember(parsed.chatId, targetHint.userId, intent === "mute");
+    if (resp.ok) {
+      await sendModerationQuickReply({
+        account,
+        chatId: parsed.chatId,
+        text: buildMuteSuccessText(intent, targetHint),
+        statusSink,
+        log,
+      });
+      return true;
+    }
+    await sendModerationQuickReply({
+      account,
+      chatId: parsed.chatId,
+      text: buildMuteFailureText(intent, resp.error_code, resp.description),
+      statusSink,
+      log,
+    });
+    return true;
+  } catch (error) {
+    log?.warn?.(`[${account.accountId}] mute quick path failed: ${String(error)}`);
+    await sendModerationQuickReply({
+      account,
+      chatId: parsed.chatId,
+      text: buildMuteFailureText(intent),
+      statusSink,
+      log,
+    });
+    return true;
+  }
+}
+
+async function tryHandleMuteCommandQuickPath(params: {
+  account: ResolvedZapryAccount;
+  parsed: ParsedInboundMessage;
+  statusSink?: StatusSink;
+  log?: RuntimeLog;
+}): Promise<boolean> {
+  const { account, parsed, statusSink, log } = params;
+  if (!parsed.isGroup) {
+    return false;
+  }
+  const pending = getPendingMuteConfirmation(parsed.chatId, parsed.senderId);
+  const confirmDecision = resolveMuteConfirmationDecision(parsed.sourceText);
+  if (pending && confirmDecision) {
+    clearPendingMuteConfirmation(parsed.chatId, parsed.senderId);
+    if (confirmDecision === "cancel") {
+      return sendModerationQuickReply({
+        account,
+        chatId: parsed.chatId,
+        text: buildMuteCancelText(pending.intent),
+        statusSink,
+        log,
+      });
+    }
+    const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+    return executeMuteCommandWithTarget({
+      client,
+      account,
+      parsed,
+      intent: pending.intent,
+      targetHint: pending.target,
+      statusSink,
+      log,
+    });
+  }
+
+  if (!isLikelyMuteCommandMessage(parsed.sourceText, parsed.targetUserHints)) {
+    return false;
+  }
+  const intent = resolveMuteCommandIntent(parsed.sourceText);
+  if (!intent) {
+    return false;
+  }
+
+  if (pending) {
+    clearPendingMuteConfirmation(parsed.chatId, parsed.senderId);
+  }
+
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  if (parsed.targetUserHints.length === 0) {
+    const lookedUpTarget = await lookupMuteTargetCandidateFromGroupMembers({
+      client,
+      parsed,
+      intent,
+      log,
+    });
+    if (lookedUpTarget) {
+      setPendingMuteConfirmation({
+        chatId: parsed.chatId,
+        senderId: parsed.senderId,
+        intent,
+        target: lookedUpTarget,
+        createdAtMs: Date.now(),
+      });
+      return sendModerationQuickReply({
+        account,
+        chatId: parsed.chatId,
+        text: buildMuteCandidateConfirmText(intent, lookedUpTarget),
+        statusSink,
+        log,
+      });
+    }
+    return sendModerationQuickReply({
+      account,
+      chatId: parsed.chatId,
+      text: buildMuteTargetMissingText(intent),
+      statusSink,
+      log,
+    });
+  }
+
+  if (parsed.targetUserHints.length > 1) {
+    return sendModerationQuickReply({
+      account,
+      chatId: parsed.chatId,
+      text: buildMuteDisambiguationText(intent, parsed.targetUserHints),
+      statusSink,
+      log,
+    });
+  }
+
+  return executeMuteCommandWithTarget({
+    client,
+    account,
+    parsed,
+    intent,
+    targetHint: parsed.targetUserHints[0],
+    statusSink,
+    log,
+  });
+}
+
+export async function tryHandleZapryInboundQuickPaths(params: {
+  account: ResolvedZapryAccount;
+  update: any;
+  statusSink?: StatusSink;
+  log?: RuntimeLog;
+}): Promise<boolean> {
+  const parsed = parseInboundMessage(params.update);
+  if (!parsed) {
+    return false;
+  }
+  const handledByMuteQuickPath = await tryHandleMuteCommandQuickPath({
+    account: params.account,
+    parsed,
+    statusSink: params.statusSink,
+    log: params.log,
+  });
+  if (handledByMuteQuickPath) {
+    params.statusSink?.({ lastInboundAt: Date.now() });
+    return true;
+  }
+  return false;
 }
 
 function summarizeMediaItem(item: ParsedInboundMediaItem): string {
@@ -1751,6 +2451,17 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   const parsed = parseInboundMessage(update);
   if (!parsed) {
     return false;
+  }
+
+  const handledByMuteQuickPath = await tryHandleMuteCommandQuickPath({
+    account,
+    parsed,
+    statusSink,
+    log,
+  });
+  if (handledByMuteQuickPath) {
+    statusSink?.({ lastInboundAt: Date.now() });
+    return true;
   }
 
   const runtime = resolveRuntime(params.runtime);

@@ -1,5 +1,5 @@
 import { ZapryApiClient } from "./api-client.js";
-import { processZapryInboundUpdate } from "./inbound.js";
+import { processZapryInboundUpdate, tryHandleZapryInboundQuickPaths } from "./inbound.js";
 import type { ResolvedZapryAccount } from "./types.js";
 
 export type MonitorContext = {
@@ -30,6 +30,17 @@ export async function monitorZapryProvider(ctx: MonitorContext): Promise<void> {
 async function dispatchInboundUpdate(ctx: MonitorContext, update: any): Promise<boolean> {
   const { onUpdate, onMessage, statusSink, log } = ctx;
   const now = Date.now();
+
+  // Priority quick paths: handle deterministic moderation actions before any host callback mode.
+  const handledByQuickPath = await tryHandleZapryInboundQuickPaths({
+    account: ctx.account,
+    update,
+    statusSink,
+    log,
+  });
+  if (handledByQuickPath) {
+    return true;
+  }
 
   // Compatibility mode #1: OpenClaw legacy gateway callback.
   if (typeof onUpdate === "function") {
