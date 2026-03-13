@@ -434,6 +434,9 @@ function inferCoreSendMediaAction(
       return "send-video";
     }
     if (mime.startsWith("audio/")) {
+      if (/(ogg|opus|amr|x-m4a|mp4)/i.test(mime)) {
+        return "send-voice";
+      }
       return "send-audio";
     }
     return "send-document";
@@ -451,10 +454,10 @@ function inferCoreSendMediaAction(
   if (["mp4", "mov", "avi", "webm", "m4v", "mkv"].includes(ext)) {
     return "send-video";
   }
-  if (["mp3", "m4a", "aac", "wav", "flac", "ogg"].includes(ext)) {
+  if (["mp3", "aac", "wav", "flac", "m4b"].includes(ext)) {
     return "send-audio";
   }
-  if (["opus"].includes(ext)) {
+  if (["opus", "ogg", "oga", "amr", "m4a"].includes(ext)) {
     return "send-voice";
   }
   return "send-document";

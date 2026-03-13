@@ -16,15 +16,25 @@ export async function sendMessageZapry(
 
   if (opts?.mediaUrl) {
     const mediaUrl = opts.mediaUrl;
-    const ext = mediaUrl.split(".").pop()?.toLowerCase() ?? "";
-    const imageExts = ["jpg", "jpeg", "png", "gif", "webp"];
+    const cleanUrl = mediaUrl.split("?")[0].split("#")[0] ?? mediaUrl;
+    const ext = cleanUrl.split(".").pop()?.toLowerCase() ?? "";
+    const imageExts = ["jpg", "jpeg", "png", "webp", "bmp", "heic", "heif"];
+    const animationExts = ["gif"];
     const videoExts = ["mp4", "mov", "avi", "webm"];
+    const voiceExts = ["opus", "ogg", "oga", "amr", "m4a"];
+    const audioExts = ["mp3", "wav", "aac", "flac", "m4b"];
 
     let resp;
-    if (imageExts.includes(ext)) {
+    if (animationExts.includes(ext)) {
+      resp = await client.sendAnimation(chatId, mediaUrl);
+    } else if (imageExts.includes(ext)) {
       resp = await client.sendPhoto(chatId, mediaUrl);
     } else if (videoExts.includes(ext)) {
       resp = await client.sendVideo(chatId, mediaUrl);
+    } else if (voiceExts.includes(ext)) {
+      resp = await client.sendVoice(chatId, mediaUrl);
+    } else if (audioExts.includes(ext)) {
+      resp = await client.sendAudio(chatId, mediaUrl);
     } else {
       resp = await client.sendDocument(chatId, mediaUrl);
     }
