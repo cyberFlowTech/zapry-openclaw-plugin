@@ -1382,22 +1382,71 @@ function normalizeLookupToken(value: string | undefined): string {
     .replace(/[\s"'`“”‘’]/g, "");
 }
 
-function extractTargetKeywordFromMuteText(text: string | undefined): string | null {
+function sanitizeMuteLookupKeyword(raw: string | undefined): string {
+  let text = String(raw ?? "").trim();
+  if (!text) {
+    return "";
+  }
+  text = text
+    .replace(/^@[^ \t\r\n]+\s*/u, "")
+    .replace(/^[“"‘'`]+|[”"’'`]+$/gu, "")
+    .replace(/[：:，,。.!！?？]+$/gu, "")
+    .trim();
+
+  let previous = "";
+  while (text && text !== previous) {
+    previous = text;
+    text = text
+      .replace(/^(请|帮|麻烦|把|将|给)\s*/u, "")
+      .replace(/^(本群里|本群内|这个群里|这个群内|这群里|群里|群内|群中的|群中|群里的|群内的)/u, "")
+      .replace(/^(叫做|叫|昵称是|名为)\s*/u, "")
+      .replace(/^(的)+/u, "")
+      .replace(/(的)?(用户|成员|群友|这个人|那个人|这个用户|那个用户|这位|那位|同学|老铁|本人)$/u, "")
+      .replace(/(一下|先|立刻|马上|现在|给我|帮我|行吗|可以吗|谢谢|拜托|哈|啊|呀|吧|呢|嘛|了)$/u, "")
+      .replace(/[：:，,。.!！?？]+$/gu, "")
+      .trim();
+  }
+  return text;
+}
+
+function extractTargetKeywordCandidatesFromMuteText(text: string | undefined): string[] {
   const normalized = text?.trim();
   if (!normalized) {
-    return null;
+    return [];
   }
   const lower = normalized.toLowerCase();
   const actionTokens = ["解除禁言", "取消禁言", "解禁", "unmute", "禁言", "mute", "封禁", "闭麦"];
+  const pushCandidate = (bucket: string[], seen: Set<string>, value: string | undefined): void => {
+    const cleaned = sanitizeMuteLookupKeyword(value);
+    const token = normalizeLookupToken(cleaned);
+    if (!cleaned || token.length < 2 || seen.has(token)) {
+      return;
+    }
+    seen.add(token);
+    bucket.push(cleaned);
+  };
+
   let actionIndex = -1;
+  let actionToken = "";
   for (const token of actionTokens) {
     const idx = lower.indexOf(token);
     if (idx >= 0 && (actionIndex < 0 || idx < actionIndex)) {
       actionIndex = idx;
+      actionToken = token;
     }
   }
   if (actionIndex < 0) {
-    return null;
+    return [];
+  }
+
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+
+  for (const atMatch of normalized.matchAll(/@([^\s，,。.!！？?]+)/gu)) {
+    pushCandidate(candidates, seen, atMatch[1]);
+  }
+  for (const quoted of normalized.matchAll(/[“"‘'`](.+?)[”"’'`]/gu)) {
+    pushCandidate(candidates, seen, quoted[1]);
   }
 
   let left = normalized.slice(0, actionIndex).trim();
@@ -1406,25 +1455,28 @@ function extractTargetKeywordFromMuteText(text: string | undefined): string | nu
   if (markerIndex >= 0) {
     left = left.slice(markerIndex + 1).trim();
   }
-  left = left
-    .replace(/^(本群里|这个群里|这群里|群里|群中)/, "")
-    .replace(/[：:，,。.!！?？]+$/g, "")
-    .replace(/^["'`“‘]+|["'`”’]+$/g, "")
-    .replace(/(给|一下|先|直接|立刻|马上)$/g, "")
-    .trim();
+  left = left.replace(/^(本群里|这个群里|这群里|群里|群中)/, "").trim();
   if (left.startsWith("@")) {
     left = left.slice(1).trim();
   }
-  if (!left) {
-    const atMatch = normalized.match(/@([^\s，,。.!！？?]+)/u);
-    if (atMatch?.[1]) {
-      left = atMatch[1].trim();
-    }
+  pushCandidate(candidates, seen, left);
+
+  if (actionToken) {
+    const right = normalized.slice(actionIndex + actionToken.length).trim();
+    pushCandidate(candidates, seen, right);
   }
-  if (!left || normalizeLookupToken(left).length < 2) {
-    return null;
+
+  let stripped = normalized;
+  for (const token of actionTokens) {
+    stripped = stripped.replaceAll(token, " ");
   }
-  return left;
+  pushCandidate(candidates, seen, stripped);
+  return candidates;
+}
+
+function extractTargetKeywordFromMuteText(text: string | undefined): string | null {
+  const candidates = extractTargetKeywordCandidatesFromMuteText(text);
+  return candidates[0] ?? null;
 }
 
 function toUserIdString(value: unknown): string | undefined {
@@ -1625,6 +1677,18 @@ function scoreGroupMemberCandidate(
   return score;
 }
 
+function scoreGroupMemberCandidateWithKeywordCandidates(
+  candidate: GroupMemberCandidate,
+  keywords: string[],
+  senderId: string,
+): number {
+  let best = 0;
+  for (const keyword of keywords) {
+    best = Math.max(best, scoreGroupMemberCandidate(candidate, keyword, senderId));
+  }
+  return best;
+}
+
 function isLikelyGroupMembersQueryMessage(text: string | undefined): boolean {
   const normalized = text?.trim().toLowerCase();
   if (!normalized) {
@@ -1748,25 +1812,72 @@ async function lookupMuteTargetCandidateFromGroupMembers(params: {
   intent: MuteCommandIntent;
   log?: RuntimeLog;
 }): Promise<InboundTargetUserHint | null> {
-  const keyword = extractTargetKeywordFromMuteText(params.parsed.sourceText);
-  if (!keyword) {
+  const keywordCandidates = extractTargetKeywordCandidatesFromMuteText(params.parsed.sourceText);
+  if (!keywordCandidates.length) {
     return null;
   }
 
   try {
-    let candidates: GroupMemberCandidate[] = [];
-    const memberResp = await params.client.getChatMembers(params.parsed.chatId, {
-      page: 1,
-      pageSize: 50,
-      keyword,
-    });
-    if (memberResp?.ok) {
-      candidates = extractGroupMemberCandidates(memberResp.result);
-    } else {
-      params.log?.warn?.(
-        `[zapry] getChatMembers lookup failed for chat ${params.parsed.chatId}: ` +
-          `${memberResp?.description ?? "unknown"}, fallback to getChatAdministrators`,
-      );
+    const candidateByUserId = new Map<string, GroupMemberCandidate>();
+    const upsertCandidate = (candidate: GroupMemberCandidate): void => {
+      const existing = candidateByUserId.get(candidate.userId);
+      if (!existing) {
+        candidateByUserId.set(candidate.userId, candidate);
+        return;
+      }
+      candidateByUserId.set(candidate.userId, {
+        ...existing,
+        displayName:
+          existing.displayName.startsWith("用户(") && !candidate.displayName.startsWith("用户(")
+            ? candidate.displayName
+            : existing.displayName,
+        username: existing.username ?? candidate.username,
+        nick: existing.nick ?? candidate.nick,
+        groupNick: existing.groupNick ?? candidate.groupNick,
+      });
+    };
+    const appendCandidates = (items: GroupMemberCandidate[]): void => {
+      for (const candidate of items) {
+        upsertCandidate(candidate);
+      }
+    };
+
+    for (const keyword of keywordCandidates) {
+      const memberResp = await params.client.getChatMembers(params.parsed.chatId, {
+        page: 1,
+        pageSize: 80,
+        keyword,
+      });
+      if (!memberResp?.ok) {
+        params.log?.warn?.(
+          `[zapry] getChatMembers keyword lookup failed for chat ${params.parsed.chatId}, ` +
+            `keyword=${keyword}: ${memberResp?.description ?? "unknown"}`,
+        );
+        continue;
+      }
+      appendCandidates(extractGroupMemberCandidates(memberResp.result));
+      if (candidateByUserId.size >= 5) {
+        break;
+      }
+    }
+
+    if (candidateByUserId.size === 0) {
+      // Fallback to full member page when keyword search misses.
+      const fullMemberResp = await params.client.getChatMembers(params.parsed.chatId, {
+        page: 1,
+        pageSize: 100,
+      });
+      if (fullMemberResp?.ok) {
+        appendCandidates(extractGroupMemberCandidates(fullMemberResp.result));
+      } else {
+        params.log?.warn?.(
+          `[zapry] getChatMembers full list failed for chat ${params.parsed.chatId}: ` +
+            `${fullMemberResp?.description ?? "unknown"}, fallback to getChatAdministrators`,
+        );
+      }
+    }
+
+    if (candidateByUserId.size === 0) {
       const adminResp = await params.client.getChatAdministrators(params.parsed.chatId);
       if (!adminResp?.ok) {
         params.log?.warn?.(
@@ -1775,28 +1886,40 @@ async function lookupMuteTargetCandidateFromGroupMembers(params: {
         );
         return null;
       }
-      candidates = extractGroupMemberCandidates(adminResp.result);
+      appendCandidates(extractGroupMemberCandidates(adminResp.result));
     }
+
+    const candidates = Array.from(candidateByUserId.values());
     if (!candidates.length) {
       return null;
     }
     const scored = candidates
       .map((candidate) => ({
         candidate,
-        score: scoreGroupMemberCandidate(candidate, keyword, params.parsed.senderId),
+        score: scoreGroupMemberCandidateWithKeywordCandidates(
+          candidate,
+          keywordCandidates,
+          params.parsed.senderId,
+        ),
       }))
       .sort((a, b) => b.score - a.score);
-    if (!scored[0] || scored[0].score < 80) {
+    const top = scored[0];
+    const second = scored[1];
+    const hasStrongMatch =
+      Boolean(top) &&
+      (top.score >= 80 ||
+        (top.score >= 70 && (!second || top.score - second.score >= 15)));
+    if (!top || !hasStrongMatch) {
       return null;
     }
 
-    const top = scored[0].candidate;
+    const resolved = top.candidate;
     return {
-      userId: top.userId,
-      username: top.username,
-      displayName: top.displayName,
+      userId: resolved.userId,
+      username: resolved.username,
+      displayName: resolved.displayName,
       source: "mentioned_users",
-      raw: `member_lookup:${keyword}`,
+      raw: `member_lookup:${keywordCandidates[0]}`,
     };
   } catch (error) {
     params.log?.warn?.(
@@ -1845,7 +1968,7 @@ function getMuteActionLabel(intent: MuteCommandIntent): string {
 
 function buildMuteTargetMissingText(intent: MuteCommandIntent): string {
   const action = getMuteActionLabel(intent);
-  return `我还没定位到目标成员。请直接 @ 目标成员，或回复目标成员那条消息后再发“${action}”。`;
+  return `我先查了群成员列表，但还没定位到目标成员。请补充更完整昵称（建议 2 字以上），或直接 @ 目标成员后再发“${action}”。`;
 }
 
 function buildMuteCandidateConfirmText(
@@ -1882,13 +2005,25 @@ function buildMuteSuccessText(intent: MuteCommandIntent, targetHint: InboundTarg
 }
 
 function buildMuteFailureText(intent: MuteCommandIntent, errorCode?: number, description?: string): string {
-  if (errorCode === 403) {
+  const normalizedDesc = description?.toLowerCase() ?? "";
+  if (
+    errorCode === 403 ||
+    normalizedDesc.includes("no permission") ||
+    normalizedDesc.includes("permission denied") ||
+    normalizedDesc.includes("forbidden") ||
+    normalizedDesc.includes("\"code\":1000045")
+  ) {
     return "操作失败：我还没有群管理权限，请先把我设为管理员后重试。";
+  }
+  if (errorCode === 401 || normalizedDesc.includes("unauthorized")) {
+    return "操作失败：身份校验未通过，请稍后重试。";
   }
   if (errorCode === 429) {
     return "操作过于频繁，请稍后再试。";
   }
-  const normalizedDesc = description?.toLowerCase() ?? "";
+  if (errorCode === 503 || normalizedDesc.includes("service unavailable")) {
+    return "操作失败：服务暂时不可用（503），请稍后重试。";
+  }
   if (errorCode === 404 || normalizedDesc.includes("not found")) {
     return "操作失败：未找到目标成员，请重新 @ 该成员后再试。";
   }
@@ -1936,6 +2071,10 @@ async function executeMuteCommandWithTarget(params: {
       });
       return true;
     }
+    log?.warn?.(
+      `[zapry] muteChatMember failed chat=${parsed.chatId} target=${targetHint.userId} ` +
+        `code=${String(resp.error_code ?? "unknown")} desc=${String(resp.description ?? "unknown")}`,
+    );
     await sendModerationQuickReply({
       account,
       chatId: parsed.chatId,
