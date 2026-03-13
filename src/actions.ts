@@ -1,7 +1,10 @@
 import { ZapryApiClient } from "./api-client.js";
 import type { ResolvedZapryAccount } from "./types.js";
-import { readFile } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import { join as joinPath, resolve as resolvePath } from "node:path";
 
 export type ActionContext = {
   action: string;
@@ -25,6 +28,9 @@ const ACTION_ALIASES: Record<string, string> = {
   sendaudio: "send-audio",
   sendvoice: "send-voice",
   sendanimation: "send-animation",
+  generateaudio: "generate-audio",
+  renderaudio: "generate-audio",
+  ttsaudio: "generate-audio",
   deletemessage: "delete-message",
   answercallbackquery: "answer-callback-query",
 
@@ -88,6 +94,22 @@ type SendMediaAction =
   | "send-voice"
   | "send-animation";
 
+type GenerateAudioMode = "auto" | "tts" | "render";
+
+type GeneratedAudioArtifact = {
+  mode: Exclude<GenerateAudioMode, "auto">;
+  buffer: Buffer;
+  mimeType: "audio/mpeg" | "audio/wav";
+  fileName: string;
+  durationSeconds: number;
+};
+
+const DEFAULT_GENERATED_AUDIO_DURATION_SECONDS = 12;
+const MIN_GENERATED_AUDIO_DURATION_SECONDS = 2;
+const MAX_GENERATED_AUDIO_DURATION_SECONDS = 30;
+const DEFAULT_GENERATE_AUDIO_FALLBACK_TEXT =
+  "抱歉，我刚刚生成音频失败了。请换个描述重试，或让我先发文字版本。";
+
 export async function handleZapryAction(ctx: ActionContext): Promise<ActionResult> {
   const { action, account, params } = ctx;
   const normalizedAction = normalizeActionName(action);
@@ -122,6 +144,8 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.sendVoice(normalized.chat_id, normalized.voice));
     case "send-animation":
       return wrap(client.sendAnimation(normalized.chat_id, normalized.animation));
+    case "generate-audio":
+      return handleGenerateAudioAction(client, normalized);
     case "delete-message":
       return wrap(client.deleteMessage(normalized.chat_id, normalized.message_id));
     case "answer-callback-query":
@@ -515,6 +539,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     "send-audio": ["chat_id", "audio"],
     "send-voice": ["chat_id", "voice"],
     "send-animation": ["chat_id", "animation"],
+    "generate-audio": ["chat_id"],
     "delete-message": ["chat_id", "message_id"],
     "answer-callback-query": ["chat_id", "callback_query_id"],
 
@@ -677,6 +702,12 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const agentKey = pickFirst(params, ["agentKey", "agent_key"]);
   const skills = pickFirst(params, ["skills"]);
   const images = pickFirst(params, ["images", "image", "image_url", "imageUrl"]);
+  const prompt = pickFirst(params, ["prompt", "audio_prompt", "audioPrompt", "script"]);
+  const audioMode = pickFirst(params, ["audio_mode", "audioMode", "generate_mode", "generateMode"]);
+  const ttsVoice = pickFirst(params, ["tts_voice", "ttsVoice", "voice_name", "voiceName"]);
+  const audioFormat = pickFirst(params, ["audio_format", "audioFormat", "format"]);
+  const durationSeconds = pickFirst(params, ["duration_seconds", "durationSeconds", "duration"]);
+  const fallbackText = pickFirst(params, ["fallback_text", "fallbackText", "error_fallback_text"]);
 
   if (chatId !== undefined) params.chat_id = normalizeChatId(chatId);
   if (userId !== undefined) params.user_id = String(userId).trim();
@@ -734,6 +765,12 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (source !== undefined) params.source = String(source).trim();
   const version = pickFirst(params, ["version"]);
   if (version !== undefined) params.version = String(version).trim();
+  if (prompt !== undefined) params.prompt = String(prompt);
+  if (audioMode !== undefined) params.audio_mode = String(audioMode).trim();
+  if (ttsVoice !== undefined) params.tts_voice = String(ttsVoice).trim();
+  if (audioFormat !== undefined) params.audio_format = String(audioFormat).trim();
+  if (durationSeconds !== undefined) params.duration_seconds = toNumberIfPossible(durationSeconds);
+  if (fallbackText !== undefined) params.fallback_text = String(fallbackText).trim();
 
   const offset = pickFirst(params, ["offset"]);
   if (offset !== undefined) params.offset = toNumberIfPossible(offset);
@@ -858,6 +895,441 @@ function normalizeStringArray(value: unknown): string[] | null {
     return [trimmed];
   }
   return null;
+}
+
+async function handleGenerateAudioAction(
+  client: ZapryApiClient,
+  params: Record<string, any>,
+): Promise<ActionResult> {
+  const chatId = String(params.chat_id ?? "").trim();
+  if (!chatId) {
+    return { ok: false, error: "missing required params for generate-audio: chat_id" };
+  }
+
+  const inputText = resolveGenerateAudioInputText(params);
+  const requestedMode = normalizeGenerateAudioMode(params.audio_mode);
+  const durationSeconds = resolveGenerateAudioDurationSeconds(params.duration_seconds);
+  const fallbackText = isNonEmptyString(params.fallback_text)
+    ? String(params.fallback_text).trim()
+    : DEFAULT_GENERATE_AUDIO_FALLBACK_TEXT;
+  const requestedFormat = normalizeGeneratedAudioFormat(params.audio_format);
+  const ttsVoice = isNonEmptyString(params.tts_voice) ? String(params.tts_voice).trim() : undefined;
+
+  try {
+    const artifact = await generateAudioArtifact({
+      mode: requestedMode,
+      text: inputText,
+      durationSeconds,
+      format: requestedFormat,
+      ttsVoice,
+    });
+    const mediaDataUri = `data:${artifact.mimeType};base64,${artifact.buffer.toString("base64")}`;
+    const sendResp = await client.sendAudio(chatId, mediaDataUri);
+    if (!sendResp.ok) {
+      const error = sendResp.description ?? "sendAudio failed";
+      await sendGenerateAudioFallback(client, chatId, fallbackText);
+      return { ok: false, error: `generate-audio send failed: ${error}` };
+    }
+    return {
+      ok: true,
+      result: {
+        ...(sendResp.result ?? {}),
+        audio_generation: {
+          mode: artifact.mode,
+          file_name: artifact.fileName,
+          mime_type: artifact.mimeType,
+          duration_seconds: artifact.durationSeconds,
+        },
+      },
+    };
+  } catch (error) {
+    await sendGenerateAudioFallback(client, chatId, fallbackText);
+    return { ok: false, error: `generate-audio failed: ${String(error)}` };
+  }
+}
+
+function resolveGenerateAudioInputText(params: Record<string, any>): string {
+  const value = pickFirst(params, ["prompt", "text", "message", "script", "tts_text", "ttsText"]);
+  if (!isNonEmptyString(value)) {
+    return "";
+  }
+  const trimmed = String(value).trim();
+  return trimmed.length > 800 ? trimmed.slice(0, 800) : trimmed;
+}
+
+function normalizeGenerateAudioMode(value: unknown): GenerateAudioMode {
+  if (!isNonEmptyString(value)) {
+    return "auto";
+  }
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (["tts", "speech", "read", "voice"].includes(normalized)) {
+    return "tts";
+  }
+  if (["render", "ringtone", "music", "tone", "synth"].includes(normalized)) {
+    return "render";
+  }
+  return "auto";
+}
+
+function normalizeGeneratedAudioFormat(value: unknown): "mp3" | "wav" {
+  if (!isNonEmptyString(value)) {
+    return "mp3";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "wav" || normalized === "wave") {
+    return "wav";
+  }
+  return "mp3";
+}
+
+function resolveGenerateAudioDurationSeconds(value: unknown): number {
+  const numeric = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_GENERATED_AUDIO_DURATION_SECONDS;
+  }
+  return Math.max(
+    MIN_GENERATED_AUDIO_DURATION_SECONDS,
+    Math.min(MAX_GENERATED_AUDIO_DURATION_SECONDS, Math.floor(numeric)),
+  );
+}
+
+function looksLikeSpeechSynthesisIntent(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return [
+    "朗读",
+    "念一下",
+    "播报",
+    "配音",
+    "旁白",
+    "转语音",
+    "读出来",
+    "tts",
+    "read aloud",
+    "speech",
+    "narration",
+  ].some((token) => normalized.includes(token));
+}
+
+function looksLikeMusicRenderIntent(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return [
+    "铃声",
+    "音效",
+    "背景音乐",
+    "bgm",
+    "纯音乐",
+    "电子",
+    "伴奏",
+    "ringtone",
+    "music",
+    "beat",
+    "melody",
+  ].some((token) => normalized.includes(token));
+}
+
+function resolveAutoAudioMode(text: string): Exclude<GenerateAudioMode, "auto"> {
+  if (text && looksLikeSpeechSynthesisIntent(text) && !looksLikeMusicRenderIntent(text)) {
+    return "tts";
+  }
+  return "render";
+}
+
+async function generateAudioArtifact(params: {
+  mode: GenerateAudioMode;
+  text: string;
+  durationSeconds: number;
+  format: "mp3" | "wav";
+  ttsVoice?: string;
+}): Promise<GeneratedAudioArtifact> {
+  const resolvedMode: Exclude<GenerateAudioMode, "auto"> =
+    params.mode === "auto" ? resolveAutoAudioMode(params.text) : params.mode;
+
+  if (resolvedMode === "tts") {
+    if (!params.text) {
+      throw new Error("tts mode requires prompt/text");
+    }
+    try {
+      return await generateTtsAudioArtifact({
+        text: params.text,
+        format: params.format,
+        ttsVoice: params.ttsVoice,
+        durationSeconds: params.durationSeconds,
+      });
+    } catch (error) {
+      if (params.mode !== "auto") {
+        throw error;
+      }
+      // Auto mode falls back to render when local TTS command is unavailable.
+      return generateRenderedAudioArtifact({
+        text: params.text,
+        durationSeconds: params.durationSeconds,
+        format: params.format,
+      });
+    }
+  }
+
+  return generateRenderedAudioArtifact({
+    text: params.text,
+    durationSeconds: params.durationSeconds,
+    format: params.format,
+  });
+}
+
+async function generateTtsAudioArtifact(params: {
+  text: string;
+  format: "mp3" | "wav";
+  ttsVoice?: string;
+  durationSeconds: number;
+}): Promise<GeneratedAudioArtifact> {
+  if (process.platform !== "darwin") {
+    throw new Error("local TTS is only available on darwin");
+  }
+
+  const tmpDir = await mkdtemp(joinPath(os.tmpdir(), "zapry-generate-audio-tts-"));
+  const aiffPath = joinPath(tmpDir, "speech.aiff");
+  const wavPath = joinPath(tmpDir, "speech.wav");
+  const mp3Path = joinPath(tmpDir, "speech.mp3");
+
+  try {
+    const sayArgs = ["-o", aiffPath];
+    if (params.ttsVoice) {
+      sayArgs.push("-v", params.ttsVoice);
+    }
+    sayArgs.push(params.text);
+    await runProcessWithTimeout("say", sayArgs, 25000);
+
+    await runProcessWithTimeout(
+      "ffmpeg",
+      ["-y", "-i", aiffPath, "-vn", "-ac", "1", "-ar", "24000", wavPath],
+      25000,
+    );
+
+    if (params.format === "wav") {
+      const buffer = await readFile(wavPath);
+      return {
+        mode: "tts",
+        buffer,
+        mimeType: "audio/wav",
+        fileName: "tts-audio.wav",
+        durationSeconds: params.durationSeconds,
+      };
+    }
+
+    await runProcessWithTimeout(
+      "ffmpeg",
+      ["-y", "-i", wavPath, "-codec:a", "libmp3lame", "-b:a", "96k", mp3Path],
+      25000,
+    );
+    const buffer = await readFile(mp3Path);
+    return {
+      mode: "tts",
+      buffer,
+      mimeType: "audio/mpeg",
+      fileName: "tts-audio.mp3",
+      durationSeconds: params.durationSeconds,
+    };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function generateRenderedAudioArtifact(params: {
+  text: string;
+  durationSeconds: number;
+  format: "mp3" | "wav";
+}): Promise<GeneratedAudioArtifact> {
+  const wavBuffer = synthesizeRingtoneWavBuffer(params.text, params.durationSeconds);
+  if (params.format === "wav") {
+    return {
+      mode: "render",
+      buffer: wavBuffer,
+      mimeType: "audio/wav",
+      fileName: "generated-ringtone.wav",
+      durationSeconds: params.durationSeconds,
+    };
+  }
+
+  try {
+    const mp3Buffer = await transcodeWavToMp3Buffer(wavBuffer);
+    return {
+      mode: "render",
+      buffer: mp3Buffer,
+      mimeType: "audio/mpeg",
+      fileName: "generated-ringtone.mp3",
+      durationSeconds: params.durationSeconds,
+    };
+  } catch {
+    return {
+      mode: "render",
+      buffer: wavBuffer,
+      mimeType: "audio/wav",
+      fileName: "generated-ringtone.wav",
+      durationSeconds: params.durationSeconds,
+    };
+  }
+}
+
+function synthesizeRingtoneWavBuffer(text: string, durationSeconds: number): Buffer {
+  const sampleRate = 24000;
+  const totalSamples = Math.max(
+    sampleRate * MIN_GENERATED_AUDIO_DURATION_SECONDS,
+    Math.floor(durationSeconds * sampleRate),
+  );
+  const pcm = new Int16Array(totalSamples);
+  const seed = createHash("sha256").update(text || "zapry-generated-ringtone").digest();
+
+  const highPitch = /高|清脆|明亮|bright|high/i.test(text);
+  const lowPitch = /低沉|厚重|dark|low/i.test(text);
+  const fastTempo = /快|急促|fast|upbeat/i.test(text);
+  const slowTempo = /慢|舒缓|slow|calm/i.test(text);
+  const beatDurationSec = fastTempo ? 0.18 : slowTempo ? 0.32 : 0.24;
+  const beatSamples = Math.max(1, Math.floor(beatDurationSec * sampleRate));
+
+  const notePool = lowPitch
+    ? [174.61, 196.0, 220.0, 261.63, 293.66, 329.63, 349.23]
+    : highPitch
+      ? [392.0, 440.0, 523.25, 659.25, 783.99, 880.0, 987.77]
+      : [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 659.25, 783.99];
+  const melodyLength = 16;
+  const melody = Array.from({ length: melodyLength }, (_, idx) => {
+    const bucket = seed[idx % seed.length] ?? idx;
+    return notePool[bucket % notePool.length];
+  });
+
+  const attackSamples = Math.max(1, Math.floor(sampleRate * 0.01));
+  const releaseSamples = Math.max(1, Math.floor(sampleRate * 0.06));
+  const masterFadeSamples = Math.min(Math.floor(sampleRate * 0.2), Math.floor(totalSamples / 8));
+
+  for (let i = 0; i < totalSamples; i += 1) {
+    const stepIndex = Math.floor(i / beatSamples) % melody.length;
+    const stepOffset = i % beatSamples;
+    const baseFreq = melody[stepIndex];
+    const t = i / sampleRate;
+
+    let envelope = 1;
+    if (stepOffset < attackSamples) {
+      envelope = stepOffset / attackSamples;
+    } else {
+      const remain = beatSamples - stepOffset;
+      if (remain < releaseSamples) {
+        envelope = Math.max(0, remain / releaseSamples);
+      }
+    }
+    const gate = stepOffset < beatSamples * 0.7 ? 1 : 0.35;
+
+    const carrier = Math.sin(2 * Math.PI * baseFreq * t);
+    const harmonic2 = 0.34 * Math.sin(2 * Math.PI * baseFreq * 2 * t + 0.23);
+    const harmonic3 = 0.17 * Math.sin(2 * Math.PI * baseFreq * 3 * t + 1.1);
+    const sub = 0.2 * Math.sin(2 * Math.PI * Math.max(60, baseFreq / 2) * t);
+    const pulse = stepIndex % 4 === 0
+      ? 0.14 * Math.sin(2 * Math.PI * 120 * t) * Math.exp(-stepOffset / (sampleRate * 0.12))
+      : 0;
+
+    let sample =
+      (carrier * 0.62 + harmonic2 + harmonic3 + sub) *
+        envelope *
+        gate +
+      pulse;
+
+    if (i < masterFadeSamples) {
+      sample *= i / masterFadeSamples;
+    } else if (i > totalSamples - masterFadeSamples) {
+      sample *= (totalSamples - i) / masterFadeSamples;
+    }
+
+    const clamped = Math.max(-1, Math.min(1, sample));
+    pcm[i] = Math.round(clamped * 32767);
+  }
+
+  return encodePcm16MonoWav(pcm, sampleRate);
+}
+
+function encodePcm16MonoWav(samples: Int16Array, sampleRate: number): Buffer {
+  const dataSize = samples.length * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16); // PCM chunk size
+  buffer.writeUInt16LE(1, 20); // audio format = PCM
+  buffer.writeUInt16LE(1, 22); // channels = mono
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28); // byte rate
+  buffer.writeUInt16LE(2, 32); // block align
+  buffer.writeUInt16LE(16, 34); // bits per sample
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < samples.length; i += 1) {
+    buffer.writeInt16LE(samples[i], 44 + i * 2);
+  }
+  return buffer;
+}
+
+async function transcodeWavToMp3Buffer(wavBuffer: Buffer): Promise<Buffer> {
+  const tmpDir = await mkdtemp(joinPath(os.tmpdir(), "zapry-generate-audio-render-"));
+  const inputPath = joinPath(tmpDir, "input.wav");
+  const outputPath = joinPath(tmpDir, "output.mp3");
+  try {
+    await writeFile(inputPath, wavBuffer);
+    await runProcessWithTimeout(
+      "ffmpeg",
+      ["-y", "-i", inputPath, "-codec:a", "libmp3lame", "-b:a", "96k", outputPath],
+      25000,
+    );
+    return await readFile(outputPath);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function runProcessWithTimeout(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${command} failed (${code}): ${stderr.trim() || "no stderr"}`));
+      }
+    });
+  });
+}
+
+async function sendGenerateAudioFallback(
+  client: ZapryApiClient,
+  chatId: string,
+  fallbackText: string,
+): Promise<void> {
+  if (!chatId || !fallbackText.trim()) {
+    return;
+  }
+  try {
+    await client.sendMessage(chatId, fallbackText.trim());
+  } catch {
+    // best effort only
+  }
 }
 
 async function wrap(promise: Promise<any>): Promise<ActionResult> {

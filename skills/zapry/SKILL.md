@@ -1,6 +1,6 @@
 ---
 name: zapry
-description: "Zapry OpenAPI 1:1 action contract for OpenClaw `message` tool. Only documented methods and params are allowed."
+description: "Zapry OpenAPI action contract for OpenClaw `message` tool (plus plugin-local generate-audio helper). Only documented actions/params are allowed."
 metadata:
   {
     "openclaw":
@@ -14,6 +14,7 @@ tags: ["zapry", "messaging", "groups", "feed", "clubs", "social", "openapi"]
 triggers_api:
   [
     "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
+    "generateAudio",
     "deleteMessage", "answerCallbackQuery",
     "getFile",
     "getUpdates", "setWebhook", "getWebhookInfo", "deleteWebhook", "webhooks/:token",
@@ -40,7 +41,7 @@ triggers_api:
 
 ## 1) 严格模式
 
-- 只允许调用文档中的 action（见第 4 节）
+- 只允许调用本技能文档中的 action（见第 4 节，含插件本地 `generate-audio`）
 - 禁止调用历史动作：`send`、`delete`、`mute`、`unmute`、`ban`、`unban`、`kick`、`set-profile`、`get-profile`、`set-name`、`set-description`、`set-wallet-address`、`get-wallet-address`
 - 用户说“改名字”必须调用 `set-my-name`
 - 用户说“改简介”必须调用 `set-my-description`
@@ -133,7 +134,18 @@ triggers_api:
 - 若语音过长导致当前轮无法完整覆盖，必须在当前轮明确说明限制，并引导用户指定时间段/问题；禁止承诺后台稍后继续。
 - 若当前轮无法读取音频内容，只能明确说明“当前无法读取该音频/语音”，并建议重发或改用文件发送；禁止伪异步承诺。
 
-## 4) Action 参数矩阵（仅文档方法）
+## 3.4) 音频生成规则（必须遵守）
+
+- 当用户明确要求“生成音频 / 生成 MP3 / 做铃声 / 做配音”时，优先调用 `generate-audio`，不要只发文字承诺“马上生成 MP3”。
+- **禁止**在未调用生成工具成功前，使用“我现在开始制作并几分钟后发你 MP3”“我已在渲染”这类承诺式话术。
+- `generate-audio` 必填 `chat_id`，建议同时传 `prompt`（生成描述）：
+  - 语音播报类需求可传：`audio_mode="tts"` + `prompt`
+  - 铃声/BGM/音效类需求可传：`audio_mode="render"` + `prompt`
+  - 不确定时用：`audio_mode="auto"`
+- 推荐附加参数：`audio_format`（`mp3`/`wav`）、`duration_seconds`（2~30）、`fallback_text`（失败兜底文案）。
+- 若 `generate-audio` 返回失败：只允许给出简洁失败说明并建议重试；禁止承诺“稍后补发”。
+
+## 4) Action 参数矩阵（以本技能文档为准）
 
 ### Messaging
 
@@ -144,6 +156,7 @@ triggers_api:
 - `send-audio`：`chat_id`, `audio`
 - `send-voice`：`chat_id`, `voice`
 - `send-animation`：`chat_id`, `animation`
+- `generate-audio`：`chat_id`；可选 `prompt`, `audio_mode(auto|tts|render)`, `audio_format(mp3|wav)`, `duration_seconds`, `tts_voice`, `fallback_text`
 - `delete-message`：`chat_id`, `message_id`
 - `answer-callback-query`：`chat_id`, `callback_query_id`；可选 `text`, `show_alert`
 

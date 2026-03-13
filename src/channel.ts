@@ -85,7 +85,7 @@ export const zapryPlugin = {
 
   actions: {
     listActions: () => [
-      "send-message", "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation",
+      "send-message", "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation", "generate-audio",
       "delete-message", "answer-callback-query",
       "get-updates", "get-file", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
       "set-my-soul", "get-my-soul", "set-my-skills", "get-my-skills", "get-my-profile",

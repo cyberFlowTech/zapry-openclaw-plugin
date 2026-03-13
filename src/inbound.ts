@@ -277,17 +277,30 @@ function resolveCommandBody(
     }
     return lines.join("\n");
   })();
+  const audioGenerationIntent = isLikelyAudioGenerationIntent(normalizedText);
+  const audioGenerationGuidance = (() => {
+    if (!audioGenerationIntent) {
+      return "";
+    }
+    return [
+      "音频生成执行规则：",
+      "- 用户要求生成音频/MP3/铃声时，优先调用 `generate-audio`，不要只发口头承诺。",
+      "- 在 `generate-audio` 成功前，禁止说“我现在开始制作并几分钟后发你 MP3”。",
+      "- 失败时只允许给简短失败说明并建议重试，禁止承诺稍后补发。",
+    ].join("\n");
+  })();
+  const extraGuidance = [moderationGuidance, audioGenerationGuidance].filter(Boolean).join("\n");
   if (normalizedText) {
     if (hasAudioLikeMedia) {
       if (transcript?.trim()) {
         if (transcriptRequested) {
-          return `用户要求：${normalizedText}\n当前轮真实转写文本：${transcript}\n用户明确要求转写/转文字时，优先直接输出上述真实转写文本；禁止根据历史上下文或主观猜测改写内容。${moderationGuidance ? `\n${moderationGuidance}` : ""}`;
+          return `用户要求：${normalizedText}\n当前轮真实转写文本：${transcript}\n用户明确要求转写/转文字时，优先直接输出上述真实转写文本；禁止根据历史上下文或主观猜测改写内容。${extraGuidance ? `\n${extraGuidance}` : ""}`;
         }
-        return `用户要求：${normalizedText}\n当前轮真实转写文本（仅供理解，不要默认回显给用户）：${transcript}\n请把该转写视为用户本轮真实语音输入，直接回答用户意图；除非用户明确要求转写/逐字稿，否则不要回显转写文本。${moderationGuidance ? `\n${moderationGuidance}` : ""}`;
+        return `用户要求：${normalizedText}\n当前轮真实转写文本（仅供理解，不要默认回显给用户）：${transcript}\n请把该转写视为用户本轮真实语音输入，直接回答用户意图；除非用户明确要求转写/逐字稿，否则不要回显转写文本。${extraGuidance ? `\n${extraGuidance}` : ""}`;
       }
-      return `${normalizedText}\n当前轮语音/音频尚未拿到真实转写文本。禁止根据用户追问文本、历史上下文或主观猜测编造语音内容；只能明确说明当前无法完成真实转写。${moderationGuidance ? `\n${moderationGuidance}` : ""}`;
+      return `${normalizedText}\n当前轮语音/音频尚未拿到真实转写文本。禁止根据用户追问文本、历史上下文或主观猜测编造语音内容；只能明确说明当前无法完成真实转写。${extraGuidance ? `\n${extraGuidance}` : ""}`;
     }
-    return moderationGuidance ? `${normalizedText}\n${moderationGuidance}` : normalizedText;
+    return extraGuidance ? `${normalizedText}\n${extraGuidance}` : normalizedText;
   }
   if (!mediaItems.length) {
     return "";
@@ -1208,6 +1221,29 @@ function isLikelyModerationIntent(text: string | undefined): boolean {
     "kick",
     "ban",
     "restrict",
+  ].some((token) => normalized.includes(token));
+}
+
+function isLikelyAudioGenerationIntent(text: string | undefined): boolean {
+  const normalized = text?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "生成音频",
+    "做个音频",
+    "做一个音频",
+    "做铃声",
+    "生成铃声",
+    "生成mp3",
+    "输出mp3",
+    "配音",
+    "朗读",
+    "tts",
+    "generate audio",
+    "make audio",
+    "ringtone",
+    "render audio",
   ].some((token) => normalized.includes(token));
 }
 

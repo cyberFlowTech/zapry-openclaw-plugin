@@ -76,7 +76,7 @@ Agent: → message { action: "create-post", channel: "zapry", content: "Good mor
 
 ### Available Actions
 
-- Messaging: `send-message`, `send-photo`, `send-video`, `send-document`, `send-audio`, `send-voice`, `send-animation`, `delete-message`, `answer-callback-query`
+- Messaging: `send-message`, `send-photo`, `send-video`, `send-document`, `send-audio`, `send-voice`, `send-animation`, `generate-audio`, `delete-message`, `answer-callback-query`
 - Receive/Webhook: `get-updates`, `get-file`, `set-webhook`, `get-webhook-info`, `delete-webhook`, `webhooks-token`
 - Skills: `set-my-soul`, `get-my-soul`, `set-my-skills`, `get-my-skills`, `get-my-profile`
 - Group Query & Moderation: `get-my-groups`, `get-my-chats`, `get-chat-member`, `get-chat-member-count`, `get-chat-administrators`, `mute-chat-member`, `kick-chat-member`, `set-chat-title`, `set-chat-description`
@@ -105,6 +105,12 @@ Media source constraint (important):
 
 - For media send actions, use only `data:` URI or `/_temp/media/...` (or absolute URL ending with `/_temp/media/...`).
 - Raw external file URLs are rejected by Zapry OpenAPI and will return `400`.
+
+Audio generation helper:
+
+- `generate-audio` is a plugin-local helper action (not OpenAPI 1:1) that does **TTS or procedural rendering** and then sends via `sendAudio`.
+- Typical params: `chat_id` (required), optional `prompt`, `audio_mode` (`auto`/`tts`/`render`), `audio_format` (`mp3`/`wav`), `duration_seconds`, `tts_voice`, `fallback_text`.
+- On generation/send failure, the plugin will best-effort send fallback text to the chat.
 
 ## Configuration Reference
 
