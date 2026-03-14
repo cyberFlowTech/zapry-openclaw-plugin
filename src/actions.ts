@@ -236,7 +236,11 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
     case "search-posts":
       return wrap(client.searchPosts(normalized.keyword, normalized.page, normalized.page_size));
     case "create-post": {
-      const resolvedImages = await materializeCreatePostImages(normalized.images);
+      let resolvedImages = await materializeCreatePostImages(normalized.images);
+      if (!resolvedImages || resolvedImages.length === 0) {
+        const generated = generateTextCardImageDataURI(normalized.content);
+        resolvedImages = [generated];
+      }
       const imageErr = validateCreatePostImageSources(resolvedImages);
       if (imageErr) {
         return { ok: false, error: imageErr };
@@ -390,6 +394,85 @@ async function materializeSendMediaSource(mediaSource: string): Promise<string> 
   } catch {
     return source;
   }
+}
+
+function generateTextCardImageDataURI(content: string): string {
+  const w = 800;
+  const h = 420;
+  const pixels = new Uint8Array(w * h * 3);
+
+  const seed = createHash("md5").update(content || "zapry").digest();
+  const hue = ((seed[0] << 8) | seed[1]) % 360;
+
+  for (let y = 0; y < h; y++) {
+    const t = y / h;
+    const [r1, g1, b1] = hslToRgb(hue, 0.65, 0.5);
+    const [r2, g2, b2] = hslToRgb((hue + 40) % 360, 0.7, 0.4);
+    const r = Math.round(r1 + (r2 - r1) * t);
+    const g = Math.round(g1 + (g2 - g1) * t);
+    const b = Math.round(b1 + (b2 - b1) * t);
+    for (let x = 0; x < w; x++) {
+      const offset = (y * w + x) * 3;
+      pixels[offset] = r;
+      pixels[offset + 1] = g;
+      pixels[offset + 2] = b;
+    }
+  }
+
+  const png = encodePNG(w, h, pixels);
+  return `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+function encodePNG(w: number, h: number, rgb: Uint8Array): Buffer {
+  const { deflateSync } = require("node:zlib") as typeof import("node:zlib");
+  const rowBytes = 1 + w * 3;
+  const rawData = Buffer.alloc(h * rowBytes);
+  for (let y = 0; y < h; y++) {
+    const rowOffset = y * rowBytes;
+    rawData[rowOffset] = 0;
+    for (let x = 0; x < w * 3; x++) {
+      rawData[rowOffset + 1 + x] = rgb[y * w * 3 + x];
+    }
+  }
+  const compressed = deflateSync(rawData, { level: 6 });
+
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = pngChunk("IHDR", (() => {
+    const d = Buffer.alloc(13);
+    d.writeUInt32BE(w, 0);
+    d.writeUInt32BE(h, 4);
+    d[8] = 8; // bit depth
+    d[9] = 2; // color type RGB
+    return d;
+  })());
+  const idat = pngChunk("IDAT", compressed);
+  const iend = pngChunk("IEND", Buffer.alloc(0));
+  return Buffer.concat([sig, ihdr, idat, iend]);
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const { crc32 } = require("node:zlib") as typeof import("node:zlib");
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const typeBytes = Buffer.from(type, "ascii");
+  const crcInput = Buffer.concat([typeBytes, data]);
+  const crcVal = Buffer.alloc(4);
+  crcVal.writeUInt32BE(crc32(crcInput) >>> 0, 0);
+  return Buffer.concat([len, typeBytes, data, crcVal]);
 }
 
 async function materializeCreatePostImages(images: unknown): Promise<string[] | undefined> {
@@ -743,7 +826,23 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const soulMd = pickFirst(params, ["soulMd", "soul_md"]);
   const agentKey = pickFirst(params, ["agentKey", "agent_key"]);
   const skills = pickFirst(params, ["skills"]);
-  const images = pickFirst(params, ["images", "image", "image_url", "imageUrl"]);
+  const images = pickFirst(params, [
+    "images",
+    "image",
+    "image_url",
+    "imageUrl",
+    "photo",
+    "photos",
+    "media",
+    "media_url",
+    "mediaUrl",
+    "media_urls",
+    "mediaUrls",
+    "attachment",
+    "attachments",
+    "file",
+    "files",
+  ]);
   const prompt = pickFirst(params, ["prompt", "audio_prompt", "audioPrompt", "script"]);
   const audioMode = pickFirst(params, ["audio_mode", "audioMode", "generate_mode", "generateMode"]);
   const ttsVoice = pickFirst(params, ["tts_voice", "ttsVoice", "voice_name", "voiceName"]);
@@ -914,7 +1013,7 @@ function isNonEmptyString(value: unknown): value is string {
 
 function normalizeStringArray(value: unknown): string[] | null {
   if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).filter(Boolean);
+    return value.map((item) => toMediaSourceString(item)).filter((item): item is string => Boolean(item));
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -935,6 +1034,27 @@ function normalizeStringArray(value: unknown): string[] | null {
       return trimmed.split(",").map((item) => item.trim()).filter(Boolean);
     }
     return [trimmed];
+  }
+  if (value && typeof value === "object") {
+    const source = toMediaSourceString(value);
+    return source ? [source] : null;
+  }
+  return null;
+}
+
+function toMediaSourceString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const source = pickFirst(record, ["url", "uri", "src", "path", "file", "image", "image_url", "imageUrl"]);
+  if (typeof source === "string") {
+    const trimmed = source.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
   return null;
 }
