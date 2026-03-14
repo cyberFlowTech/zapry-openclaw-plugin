@@ -105,11 +105,18 @@ type GeneratedAudioArtifact = {
   durationSeconds: number;
 };
 
+type MaterializeMediaOptions = {
+  allowExternalHttpImages?: boolean;
+  sourceLabel?: string;
+};
+
 const DEFAULT_GENERATED_AUDIO_DURATION_SECONDS = 12;
 const MIN_GENERATED_AUDIO_DURATION_SECONDS = 2;
 const MAX_GENERATED_AUDIO_DURATION_SECONDS = 30;
 const DEFAULT_GENERATE_AUDIO_FALLBACK_TEXT =
   "抱歉，我刚刚生成音频失败了。请换个描述重试，或让我先发文字版本。";
+const MAX_EXTERNAL_IMAGE_BYTES = 10 * 1024 * 1024;
+const EXTERNAL_IMAGE_FETCH_TIMEOUT_MS = 15_000;
 
 export async function handleZapryAction(ctx: ActionContext): Promise<ActionResult> {
   const { action, account, params } = ctx;
@@ -236,7 +243,13 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
     case "search-posts":
       return wrap(client.searchPosts(normalized.keyword, normalized.page, normalized.page_size));
     case "create-post": {
-      let resolvedImages = await materializeCreatePostImages(normalized.images);
+      let resolvedImages: string[] | undefined;
+      try {
+        resolvedImages = await materializeCreatePostImages(normalized.images);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "failed to process create-post images";
+        return { ok: false, error: message };
+      }
       if (!resolvedImages || resolvedImages.length === 0) {
         const generated = generateTextCardImageDataURI(normalized.content);
         resolvedImages = [generated];
@@ -372,7 +385,10 @@ function pickCoreSendMediaSource(params: Record<string, any>): string | null {
   return null;
 }
 
-async function materializeSendMediaSource(mediaSource: string): Promise<string> {
+async function materializeSendMediaSource(
+  mediaSource: string,
+  options?: MaterializeMediaOptions,
+): Promise<string> {
   const source = mediaSource.trim();
   if (
     /^data:[^,]+,.+/i.test(source) ||
@@ -384,6 +400,10 @@ async function materializeSendMediaSource(mediaSource: string): Promise<string> 
 
   const localPath = toLocalMediaPath(source);
   if (!localPath) {
+    if (options?.allowExternalHttpImages && /^https?:\/\//i.test(source)) {
+      const sourceLabel = options.sourceLabel ?? "image";
+      return downloadExternalImageAsDataURI(source, sourceLabel);
+    }
     return source;
   }
 
@@ -394,6 +414,88 @@ async function materializeSendMediaSource(mediaSource: string): Promise<string> 
   } catch {
     return source;
   }
+}
+
+async function downloadExternalImageAsDataURI(source: string, sourceLabel: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EXTERNAL_IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(source, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const contentType = normalizeContentType(response.headers.get("content-type"));
+    const fallbackMime = inferMimeTypeFromPath(source);
+    const mime = contentType || fallbackMime;
+    if (!mime.startsWith("image/")) {
+      throw new Error(`content-type ${JSON.stringify(mime)} is not image/*`);
+    }
+
+    const binary = await readResponseBodyWithSizeLimit(response, MAX_EXTERNAL_IMAGE_BYTES);
+    return `data:${mime};base64,${binary.toString("base64")}`;
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error(
+        `${sourceLabel} download timed out after ${EXTERNAL_IMAGE_FETCH_TIMEOUT_MS}ms`,
+      );
+    }
+    if (err instanceof Error) {
+      throw new Error(`${sourceLabel} download failed: ${err.message}`);
+    }
+    throw new Error(`${sourceLabel} download failed`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeContentType(contentType: string | null): string {
+  return String(contentType ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+}
+
+async function readResponseBodyWithSizeLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  const contentLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`file is too large (${contentLength} bytes), max ${maxBytes} bytes`);
+  }
+
+  if (!response.body) {
+    throw new Error("empty response body");
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!value || value.byteLength === 0) {
+      continue;
+    }
+    total += value.byteLength;
+    if (total > maxBytes) {
+      throw new Error(`file is too large (${total} bytes), max ${maxBytes} bytes`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const maybeError = err as { name?: string; code?: string };
+  return maybeError.name === "AbortError" || maybeError.code === "ABORT_ERR";
 }
 
 function generateTextCardImageDataURI(content: string): string {
@@ -479,16 +581,17 @@ async function materializeCreatePostImages(images: unknown): Promise<string[] | 
   if (!Array.isArray(images)) {
     return undefined;
   }
-  const resolved: string[] = [];
-  for (const item of images) {
+  const resolved = await Promise.all(images.map(async (item, idx) => {
     if (!isNonEmptyString(item)) {
-      continue;
+      return null;
     }
     const source = String(item).trim();
-    const materialized = await materializeSendMediaSource(source);
-    resolved.push(materialized);
-  }
-  return resolved;
+    return materializeSendMediaSource(source, {
+      allowExternalHttpImages: true,
+      sourceLabel: `images[${idx}]`,
+    });
+  }));
+  return resolved.filter((item): item is string => isNonEmptyString(item));
 }
 
 function validateCreatePostImageSources(images: string[] | undefined): string | null {
@@ -500,7 +603,7 @@ function validateCreatePostImageSources(images: string[] | undefined): string | 
     if (mediaErr) {
       return (
         `invalid create-post images: ${mediaErr} ` +
-        "(tip: provide local file path, data URI, or /_temp/media URL)"
+        "(tip: provide local file path, data URI, /_temp/media URL, or external image URL)"
       );
     }
   }
@@ -751,8 +854,8 @@ function validateMediaSource(value: unknown, fieldName: string): string | null {
     return null;
   }
   return (
-    `invalid ${fieldName}: only data URI or /_temp/media URL is supported by Zapry OpenAPI ` +
-    "(external http(s) file URL is not accepted)"
+    `invalid ${fieldName}: only data URI or /_temp/media URL can be sent to Zapry OpenAPI directly ` +
+    "(tip: for create-post images, external image URL is supported and will be auto-downloaded)"
   );
 }
 

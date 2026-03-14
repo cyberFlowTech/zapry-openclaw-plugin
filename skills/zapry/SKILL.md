@@ -89,7 +89,7 @@ triggers_api:
 
 ## 3) 媒体来源约束（必须遵守）
 
-发送媒体时（photo/video/document/audio/voice/animation，以及 `create-post` 的 `images`），媒体字段仅支持：
+发送媒体时（`photo` / `video` / `document` / `audio` / `voice` / `animation`），媒体字段仅支持：
 
 - `data:` base64 URI
 - `/_temp/media/...`
@@ -99,8 +99,9 @@ triggers_api:
 
 补充：
 
-- `create-post` 允许传本地文件路径（如 `/tmp/a.jpg`、`./a.png`、`file:///tmp/a.jpg`），插件会自动转为 `data:` URI 再调用 OpenAPI。
-- 若本地路径不可读，或传入外链 URL，OpenAPI 会按来源约束拒绝该图片。
+- `create-post` 的 `images` 支持：本地文件路径（如 `/tmp/a.jpg`、`./a.png`、`file:///tmp/a.jpg`）、`data:` URI、`/_temp/media/...`、外部 HTTP(S) 图片 URL。
+- 当 `create-post` 传入外部 HTTP(S) 图片 URL 时，插件会先下载并转换为 `data:` URI，再调用 OpenAPI（单图最大 10MB，下载超时 15 秒）。
+- 若本地路径不可读、外链下载失败、文件超限、或内容类型不是 `image/*`，会在插件侧直接报错并拒绝该图片。
 
 ## 3.1) 入站媒体自动处理（必须遵守）
 
@@ -221,9 +222,9 @@ triggers_api:
 
 ### Feed
 
-- `create-post`：必填 `content`；可选 `images`（建议本地路径 / `data:` / `/_temp/media`，禁止外链）
+- `create-post`：必填 `content`；可选 `images`（支持本地路径 / `data:` / `/_temp/media` / 外部 HTTP(S) 图片 URL，外链会自动下载转换）
 - 当用户明确要求“带图/配图/发图片动态”或入站上下文已包含图片附件时，`create-post` 的 `images` 视为**条件必填**，禁止静默降级为纯文字动态。
-- 若无法提取到合法图片来源（本地路径 / `data:` / `/_temp/media`），不要直接调用 `create-post`；先明确告知“当前缺少可用图片源”，并请求用户重发图片或确认改为纯文字。
+- 若无法提取到合法图片来源（本地路径 / `data:` / `/_temp/media` / 可下载外链图片），不要直接调用 `create-post`；先明确告知“当前缺少可用图片源”，并请求用户重发图片或确认改为纯文字。
 - `delete-post`：必填 `dynamic_id`
 - `comment-post`：必填 `dynamic_id`, `content`
 - `like-post` / `share-post`：必填 `dynamic_id`
