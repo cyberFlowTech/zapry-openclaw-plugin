@@ -280,6 +280,10 @@ export class ZapryApiClient {
     return this.post("createPost", { content, images });
   }
 
+  async deletePost(dynamicId: number) {
+    return this.post("deletePost", { dynamic_id: dynamicId });
+  }
+
   async commentPost(dynamicId: number, content: string) {
     return this.post("commentPost", { dynamic_id: dynamicId, content });
   }
@@ -300,10 +304,6 @@ export class ZapryApiClient {
 
   async createClub(name: string, desc?: string, avatar?: string) {
     return this.post("createClub", { name, desc, avatar });
-  }
-
-  async postToClub(clubId: number, content: string, images?: string[]) {
-    return this.post("postToClub", { club_id: clubId, content, images });
   }
 
   async updateClub(clubId: number, name?: string, desc?: string, avatar?: string) {

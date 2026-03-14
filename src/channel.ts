@@ -96,8 +96,8 @@ export const zapryPlugin = {
       "accept-friend-request", "reject-friend-request", "add-friend", "delete-friend",
       "set-my-name", "set-my-description",
       "get-trending-posts", "get-latest-posts", "get-my-posts", "search-posts",
-      "create-post", "comment-post", "like-post", "share-post",
-      "get-my-clubs", "create-club", "post-to-club", "update-club",
+      "create-post", "delete-post", "comment-post", "like-post", "share-post",
+      "get-my-clubs", "create-club", "update-club",
     ],
     extractToolSend: (ctx: any) => {
       if (ctx.action === "send-message") {

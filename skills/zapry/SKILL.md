@@ -23,11 +23,11 @@ triggers_api:
     "getMyGroups", "getMyChats", "getMyContacts", "setMyFriendVerify", "getMyFriendRequests",
     "acceptFriendRequest", "rejectFriendRequest", "addFriend", "deleteFriend",
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
-    "createPost", "commentPost", "likePost", "sharePost",
+    "createPost", "deletePost", "commentPost", "likePost", "sharePost",
     "getTrendingPosts", "getLatestPosts", "getMyPosts", "searchPosts",
     "getMyClubs",
     "getMe", "getUserProfilePhotos", "setMyName", "setMyDescription", "setMyWalletAddress",
-    "createClub", "postToClub", "updateClub"
+    "createClub", "updateClub"
   ]
 ---
 
@@ -89,13 +89,18 @@ triggers_api:
 
 ## 3) 媒体来源约束（必须遵守）
 
-发送媒体时（photo/video/document/audio/voice/animation），媒体字段仅支持：
+发送媒体时（photo/video/document/audio/voice/animation，以及 `create-post` 的 `images`），媒体字段仅支持：
 
 - `data:` base64 URI
 - `/_temp/media/...`
 - `https://<host>/_temp/media/...`（或 `http://` 同样路径）
 
 不接受任意外部文件 URL（会触发 400）。
+
+补充：
+
+- `create-post` 允许传本地文件路径（如 `/tmp/a.jpg`、`./a.png`、`file:///tmp/a.jpg`），插件会自动转为 `data:` URI 再调用 OpenAPI。
+- 若本地路径不可读，或传入外链 URL，OpenAPI 会按来源约束拒绝该图片。
 
 ## 3.1) 入站媒体自动处理（必须遵守）
 
@@ -216,7 +221,8 @@ triggers_api:
 
 ### Feed
 
-- `create-post`：必填 `content`；可选 `images`
+- `create-post`：必填 `content`；可选 `images`（建议本地路径 / `data:` / `/_temp/media`，禁止外链）
+- `delete-post`：必填 `dynamic_id`
 - `comment-post`：必填 `dynamic_id`, `content`
 - `like-post` / `share-post`：必填 `dynamic_id`
 - `get-trending-posts` / `get-latest-posts` / `get-my-posts`：可选 `page`, `page_size`
@@ -226,7 +232,6 @@ triggers_api:
 
 - `get-my-clubs`：可选 `page`, `page_size`
 - `create-club`：必填 `name`；可选 `desc`, `avatar`
-- `post-to-club`：必填 `club_id`, `content`；可选 `images`
 - `update-club`：必填 `club_id`；可选 `name`, `desc`, `avatar`
 
 ## 5) Preflight Checklist

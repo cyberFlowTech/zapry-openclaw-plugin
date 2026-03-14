@@ -77,13 +77,13 @@ const ACTION_ALIASES: Record<string, string> = {
   getmyposts: "get-my-posts",
   searchposts: "search-posts",
   createpost: "create-post",
+  deletepost: "delete-post",
   commentpost: "comment-post",
   likepost: "like-post",
   sharepost: "share-post",
 
   getmyclubs: "get-my-clubs",
   createclub: "create-club",
-  posttoclub: "post-to-club",
   updateclub: "update-club",
 };
 
@@ -235,8 +235,16 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.getMyPosts(normalized.page, normalized.page_size));
     case "search-posts":
       return wrap(client.searchPosts(normalized.keyword, normalized.page, normalized.page_size));
-    case "create-post":
-      return wrap(client.createPost(normalized.content, normalized.images));
+    case "create-post": {
+      const resolvedImages = await materializeCreatePostImages(normalized.images);
+      const imageErr = validateCreatePostImageSources(resolvedImages);
+      if (imageErr) {
+        return { ok: false, error: imageErr };
+      }
+      return wrap(client.createPost(normalized.content, resolvedImages));
+    }
+    case "delete-post":
+      return wrap(client.deletePost(normalized.dynamic_id));
     case "comment-post":
       return wrap(client.commentPost(normalized.dynamic_id, normalized.content));
     case "like-post":
@@ -249,8 +257,6 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.getMyClubs(normalized.page, normalized.page_size));
     case "create-club":
       return wrap(client.createClub(normalized.name, normalized.desc, normalized.avatar));
-    case "post-to-club":
-      return wrap(client.postToClub(normalized.club_id, normalized.content, normalized.images));
     case "update-club":
       return wrap(
         client.updateClub(normalized.club_id, normalized.name, normalized.desc, normalized.avatar),
@@ -384,6 +390,38 @@ async function materializeSendMediaSource(mediaSource: string): Promise<string> 
   } catch {
     return source;
   }
+}
+
+async function materializeCreatePostImages(images: unknown): Promise<string[] | undefined> {
+  if (!Array.isArray(images)) {
+    return undefined;
+  }
+  const resolved: string[] = [];
+  for (const item of images) {
+    if (!isNonEmptyString(item)) {
+      continue;
+    }
+    const source = String(item).trim();
+    const materialized = await materializeSendMediaSource(source);
+    resolved.push(materialized);
+  }
+  return resolved;
+}
+
+function validateCreatePostImageSources(images: string[] | undefined): string | null {
+  if (!images || images.length === 0) {
+    return null;
+  }
+  for (let idx = 0; idx < images.length; idx += 1) {
+    const mediaErr = validateMediaSource(images[idx], `images[${idx}]`);
+    if (mediaErr) {
+      return (
+        `invalid create-post images: ${mediaErr} ` +
+        "(tip: provide local file path, data URI, or /_temp/media URL)"
+      );
+    }
+  }
+  return null;
 }
 
 function toLocalMediaPath(source: string): string | null {
@@ -577,13 +615,13 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     // Feed
     "search-posts": ["keyword"],
     "create-post": ["content"],
+    "delete-post": ["dynamic_id"],
     "comment-post": ["dynamic_id", "content"],
     "like-post": ["dynamic_id"],
     "share-post": ["dynamic_id"],
 
     // Club
     "create-club": ["name"],
-    "post-to-club": ["club_id", "content"],
     "update-club": ["club_id"],
   };
 
