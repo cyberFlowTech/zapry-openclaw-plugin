@@ -87,6 +87,32 @@ const ACTION_ALIASES: Record<string, string> = {
   updateclub: "update-club",
 };
 
+const CREATE_POST_COMPAT_ACTION = "thread-list";
+const CREATE_POST_COMPAT_PARAM_KEYS = [
+  "content",
+  "message",
+  "text",
+  "images",
+  "image",
+  "image_url",
+  "imageUrl",
+  "photo",
+  "photos",
+  "media",
+  "media_url",
+  "mediaUrl",
+  "media_urls",
+  "mediaUrls",
+  "attachment",
+  "attachments",
+  "file",
+  "files",
+  "filename",
+  "buffer",
+  "contentType",
+  "content_type",
+] as const;
+
 type SendMediaAction =
   | "send-photo"
   | "send-video"
@@ -120,7 +146,7 @@ const EXTERNAL_IMAGE_FETCH_TIMEOUT_MS = 15_000;
 
 export async function handleZapryAction(ctx: ActionContext): Promise<ActionResult> {
   const { action, account, params } = ctx;
-  const normalizedAction = normalizeActionName(action);
+  const normalizedAction = resolveActionForRuntime(action, params);
   const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
   const normalized = normalizeActionParams(normalizedAction, params);
   const requiredError = validateRequiredParams(normalizedAction, normalized);
@@ -245,7 +271,7 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
     case "create-post": {
       let resolvedImages: string[] | undefined;
       try {
-        resolvedImages = await materializeCreatePostImages(normalized.images);
+        resolvedImages = await materializeCreatePostImages(normalized.images, client);
       } catch (err) {
         const message = err instanceof Error ? err.message : "failed to process create-post images";
         return { ok: false, error: message };
@@ -577,15 +603,45 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([len, typeBytes, data, crcVal]);
 }
 
-async function materializeCreatePostImages(images: unknown): Promise<string[] | undefined> {
+function extractImageSource(item: unknown): string | null {
+  if (typeof item === "string" && item.trim().length > 0) return item.trim();
+  if (item && typeof item === "object") {
+    for (const key of ["fileId", "file_id", "url", "source", "src", "path", "uri"]) {
+      const val = (item as Record<string, unknown>)[key];
+      if (typeof val === "string" && val.trim().length > 0) return val.trim();
+    }
+  }
+  return null;
+}
+
+async function materializeCreatePostImages(
+  images: unknown,
+  client?: { getFile: (fileId: string) => Promise<any> },
+): Promise<string[] | undefined> {
   if (!Array.isArray(images)) {
-    return undefined;
+    if (typeof images === "string" && images.trim().length > 0) {
+      images = [images];
+    } else {
+      return undefined;
+    }
   }
   const resolved = await Promise.all(images.map(async (item, idx) => {
-    if (!isNonEmptyString(item)) {
-      return null;
+    let source = extractImageSource(item);
+    if (!source) return null;
+
+    if (client && /^mf_[0-9a-f]+$/i.test(source)) {
+      try {
+        const fileResp = await client.getFile(source);
+        const fileUrl =
+          fileResp?.result?.file_url ??
+          fileResp?.result?.file_path ??
+          fileResp?.result?.url;
+        if (typeof fileUrl === "string" && fileUrl.trim().length > 0) {
+          source = fileUrl.trim();
+        }
+      } catch {}
     }
-    const source = String(item).trim();
+
     return materializeSendMediaSource(source, {
       allowExternalHttpImages: true,
       sourceLabel: `images[${idx}]`,
@@ -897,6 +953,37 @@ function normalizeActionName(action: string): string {
   return ACTION_ALIASES[lower] ?? ACTION_ALIASES[hyphen] ?? ACTION_ALIASES[compact] ?? hyphen;
 }
 
+function resolveActionForRuntime(action: string, rawParams: Record<string, any>): string {
+  const normalizedAction = normalizeActionName(action);
+  if (
+    normalizedAction === CREATE_POST_COMPAT_ACTION &&
+    looksLikeCreatePostPayload(rawParams)
+  ) {
+    return "create-post";
+  }
+  return normalizedAction;
+}
+
+function looksLikeCreatePostPayload(rawParams: Record<string, any>): boolean {
+  if (!rawParams || typeof rawParams !== "object") {
+    return false;
+  }
+  return CREATE_POST_COMPAT_PARAM_KEYS.some((key) => hasMeaningfulValue(rawParams[key]));
+}
+
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return true;
+}
+
 function normalizeActionParams(action: string, raw: Record<string, any>): Record<string, any> {
   const params = { ...(raw ?? {}) };
 
@@ -945,6 +1032,8 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
     "attachments",
     "file",
     "files",
+    "fileIds",
+    "file_ids",
   ]);
   const prompt = pickFirst(params, ["prompt", "audio_prompt", "audioPrompt", "script"]);
   const audioMode = pickFirst(params, ["audio_mode", "audioMode", "generate_mode", "generateMode"]);
@@ -977,6 +1066,14 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (text !== undefined) params.text = String(text);
   const content = pickFirst(params, ["content"]);
   if (content !== undefined) params.content = String(content).trim();
+  if (
+    action === "create-post" &&
+    (typeof params.content !== "string" || params.content.trim().length === 0) &&
+    typeof params.text === "string" &&
+    params.text.trim().length > 0
+  ) {
+    params.content = params.text.trim();
+  }
 
   const keyword = pickFirst(params, ["keyword", "q", "query"]);
   if (keyword !== undefined) params.keyword = String(keyword).trim();

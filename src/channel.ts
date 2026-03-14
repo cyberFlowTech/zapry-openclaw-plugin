@@ -83,24 +83,20 @@ export const zapryPlugin = {
     },
   },
 
+  agentPrompt: {
+    messageToolHints: () => [
+      `For Zapry, use "message" tool only for sending chat messages with action "send". ` +
+      `For all non-messaging Zapry operations, use "zapry_action". ` +
+      `To publish to feed (广场), use "zapry_post" with content and optional images.`,
+    ],
+  },
+
   actions: {
     listActions: () => [
-      "send-message", "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation", "generate-audio",
-      "delete-message", "answer-callback-query",
-      "get-updates", "get-file", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
-      "set-my-soul", "get-my-soul", "set-my-skills", "get-my-skills", "get-my-profile",
-      "get-my-groups", "get-my-chats", "get-chat-member", "get-chat-members", "get-chat-member-count", "get-chat-administrators",
-      "mute-chat-member", "kick-chat-member", "set-chat-title", "set-chat-description",
-      "get-me", "get-user-profile-photos", "set-my-wallet-address", "set-my-friend-verify",
-      "get-my-contacts", "get-my-friend-requests",
-      "accept-friend-request", "reject-friend-request", "add-friend", "delete-friend",
-      "set-my-name", "set-my-description",
-      "get-trending-posts", "get-latest-posts", "get-my-posts", "search-posts",
-      "create-post", "delete-post", "comment-post", "like-post", "share-post",
-      "get-my-clubs", "create-club", "update-club",
+      "send",
     ],
     extractToolSend: (ctx: any) => {
-      if (ctx.action === "send-message") {
+      if (ctx.action === "send" || ctx.action === "send-message") {
         return {
           to: ctx.params?.to ?? ctx.params?.chatId ?? ctx.params?.chat_id,
           text: ctx.params?.message ?? ctx.params?.text,

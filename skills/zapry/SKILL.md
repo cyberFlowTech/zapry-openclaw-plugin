@@ -1,6 +1,6 @@
 ---
 name: zapry
-description: "Zapry OpenAPI action contract for OpenClaw `message` tool (plus plugin-local generate-audio helper). Only documented actions/params are allowed."
+description: "Zapry OpenAPI action contract. Use `message` only for action `send`; use `zapry_action` for non-messaging actions; use `zapry_post` for feed posting."
 metadata:
   {
     "openclaw":
@@ -9,8 +9,8 @@ metadata:
         "requires": { "config": ["channels.zapry"] }
       }
   }
-allowed-tools: ["message", "pdf"]
-tags: ["zapry", "messaging", "groups", "feed", "clubs", "social", "openapi"]
+allowed-tools: ["message", "zapry_action", "zapry_post", "pdf"]
+tags: ["zapry", "messaging", "groups", "feed", "social", "openapi"]
 triggers_api:
   [
     "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
@@ -25,19 +25,24 @@ triggers_api:
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
     "createPost", "deletePost", "commentPost", "likePost", "sharePost",
     "getTrendingPosts", "getLatestPosts", "getMyPosts", "searchPosts",
-    "getMyClubs",
-    "getMe", "getUserProfilePhotos", "setMyName", "setMyDescription", "setMyWalletAddress",
-    "createClub", "updateClub"
+    "getMe", "getUserProfilePhotos", "setMyName", "setMyDescription", "setMyWalletAddress"
   ]
 ---
 
-# Zapry (via `message` / `pdf`)
+# Zapry (via `message` / `zapry_action` / `zapry_post` / `pdf`)
 
-执行 Zapry 动作时使用 `message` 工具；分析入站 PDF 时允许使用 `pdf` 工具。所有 `message` 调用必须带：
+执行 Zapry 动作时按以下路由：
 
-- `channel: "zapry"`
-- `action: "<documented-action>"`
-- 该 action 的文档必填参数（顶层字段）
+- `message`: 仅用于消息发送，固定 `action: "send"`，并传 `channel: "zapry"` + `target` + `text`
+- `zapry_action`: 所有非消息操作（身份、联系人、群、技能、feed 查询/互动、webhook 等）
+- `zapry_post`: 发广场动态（create-post），传 `content`，可选 `images`
+- `pdf`: 仅用于 PDF 分析
+
+## 路由规则（必须遵守）
+
+- 禁止用 `message` 工具调用 `create-post`、`get-my-profile`、`get-my-friend-requests` 等非消息 action
+- 发广场动态必须走 `zapry_post`
+- 非消息查询/管理必须走 `zapry_action`
 
 ## 1) 严格模式
 
@@ -72,7 +77,7 @@ triggers_api:
 - `send-message` / `send-photo` / `send-video` 等消息类
 - `get-updates` / `get-file`
 - `get-my-contacts` / `get-my-friend-requests`（只读查询）
-- `get-my-groups` / `get-my-chats` / `get-my-clubs`
+- `get-my-groups` / `get-my-chats`
 - `get-trending-posts` / `get-latest-posts` 等 feed 查询
 - `get-me` / `get-my-profile` / `get-my-soul` / `get-my-skills`（只读）
 
@@ -80,12 +85,12 @@ triggers_api:
 
 优先使用文档参数名（snake_case）：
 
-- `chat_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`, `club_id`
+- `chat_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`
 - `page`, `page_size`, `language_code`, `wallet_address`, `need_verify`, `pending_only`
 - `text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `content`, `images`
 - `soulMd`, `skills`, `version`, `source`, `agentKey`
 
-兼容别名（仅兼容，不作为主写法）：`chatId`、`userId`、`messageId`、`dynamicId`、`clubId`、`pageSize`、`languageCode`
+兼容别名（仅兼容，不作为主写法）：`chatId`、`userId`、`messageId`、`dynamicId`、`pageSize`、`languageCode`
 
 ## 3) 媒体来源约束（必须遵守）
 
