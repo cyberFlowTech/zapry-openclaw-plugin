@@ -60,3 +60,52 @@ export type ZaprySendResult = {
   messageId?: string;
   error?: string;
 };
+
+// ── Profile Source (auto-sync to Zapry platform) ──
+
+export type ProfileSourceSkill = {
+  skillKey: string;
+  skillVersion: string;
+  source: string;
+  path: string;
+  content: string;
+  sha256: string;
+  bytes: number;
+};
+
+export type ProfileSource = {
+  version: string;
+  source: string;
+  agentKey: string;
+  snapshotId: string;
+  soulMd: string;
+  skills: ProfileSourceSkill[];
+};
+
+export type DerivedProfile = {
+  name?: string;
+  role?: string;
+  vibe?: string;
+  emoji?: string;
+  avatar?: string;
+  tags?: string[];
+  summary?: string;
+  skills?: string[];
+  routeTags?: string[];
+  derivedVersion?: string;
+  derivedAt?: string;
+  overrideRevision?: number;
+};
+
+export type SetMyProfilePayload = {
+  profileSource: ProfileSource;
+};
+
+export type SetMyProfileResponse = {
+  ok: boolean;
+  unsupported_profile_source?: boolean;
+  derived?: {
+    snapshotId?: string;
+    profile?: DerivedProfile;
+  };
+};

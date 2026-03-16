@@ -8,6 +8,7 @@ import { monitorZapryProvider } from "./monitor.js";
 import { handleZapryAction } from "./actions.js";
 import { ZapryApiClient } from "./api-client.js";
 import { DEFAULT_ACCOUNT_ID } from "./types.js";
+import { syncProfileToZapry } from "./profile-sync.js";
 
 export const zapryPlugin = {
   id: "zapry",
@@ -201,6 +202,14 @@ export const zapryPlugin = {
 
       client.setMyPresence(true).catch(() => {});
       ctx.log?.info(`[${account.accountId}] presence set to online`);
+
+      const projectRoot =
+        ctx.runtime?.projectRoot ?? ctx.runtime?.config?.projectRoot ?? process.cwd();
+      syncProfileToZapry(account, { projectRoot, log: ctx.log }).catch((err) => {
+        ctx.log?.warn?.(
+          `[${account.accountId}] profile sync failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
 
       ctx.abortSignal?.addEventListener("abort", () => {
         client.setMyPresence(false).catch(() => {});

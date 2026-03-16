@@ -1,4 +1,8 @@
-import type { ZapryApiResponse } from "./types.js";
+import type {
+  ZapryApiResponse,
+  SetMyProfilePayload,
+  SetMyProfileResponse,
+} from "./types.js";
 
 type SetMySoulPayload = {
   soulMd: string;
@@ -165,6 +169,10 @@ export class ZapryApiClient {
     return this.post("getMyProfile");
   }
 
+  async setMyProfile(payload: SetMyProfilePayload): Promise<ZapryApiResponse<SetMyProfileResponse>> {
+    return this.post("setMyProfile", payload as unknown as Record<string, unknown>);
+  }
+
   // ── Group Query & Moderation ──
 
   async getMyGroups(page?: number, pageSize?: number) {
@@ -312,10 +320,6 @@ export class ZapryApiClient {
 
   async updateClub(clubId: number, name?: string, desc?: string, avatar?: string) {
     return this.post("updateClub", { club_id: clubId, name, desc, avatar });
-  }
-
-  async sendChatAction(chatId: string, action: string) {
-    return this.post("sendChatAction", { chat_id: chatId, action });
   }
 
   async setMyPresence(online: boolean) {
