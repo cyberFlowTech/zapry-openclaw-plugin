@@ -85,6 +85,7 @@ const ACTION_ALIASES: Record<string, string> = {
   getmyclubs: "get-my-clubs",
   createclub: "create-club",
   updateclub: "update-club",
+  sendchataction: "send-chat-action",
 };
 
 const CREATE_POST_COMPAT_ACTION = "thread-list";
@@ -180,6 +181,8 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.sendAnimation(normalized.chat_id, normalized.animation));
     case "generate-audio":
       return handleGenerateAudioAction(client, normalized);
+    case "send-chat-action":
+      return wrap(client.sendChatAction(normalized.chat_id, normalized.action));
     case "delete-message":
       return wrap(client.deleteMessage(normalized.chat_id, normalized.message_id));
     case "answer-callback-query":

@@ -309,4 +309,12 @@ export class ZapryApiClient {
   async updateClub(clubId: number, name?: string, desc?: string, avatar?: string) {
     return this.post("updateClub", { club_id: clubId, name, desc, avatar });
   }
+
+  async sendChatAction(chatId: string, action: string) {
+    return this.post("sendChatAction", { chat_id: chatId, action });
+  }
+
+  async setMyPresence(online: boolean) {
+    return this.post("setMyPresence", { online });
+  }
 }

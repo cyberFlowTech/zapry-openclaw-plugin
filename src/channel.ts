@@ -181,8 +181,9 @@ export const zapryPlugin = {
       const { account } = ctx;
       ctx.log?.info(`[${account.accountId}] starting Zapry provider (${account.config.mode} mode)`);
 
+      const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+
       try {
-        const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
         const probe = await client.getMe();
         if (probe.ok) {
           const bot = probe.result as any;
@@ -197,6 +198,14 @@ export const zapryPlugin = {
       } catch {
         // probe is best-effort
       }
+
+      client.setMyPresence(true).catch(() => {});
+      ctx.log?.info(`[${account.accountId}] presence set to online`);
+
+      ctx.abortSignal?.addEventListener("abort", () => {
+        client.setMyPresence(false).catch(() => {});
+        ctx.log?.info(`[${account.accountId}] presence set to offline`);
+      });
 
       return monitorZapryProvider({
         account,

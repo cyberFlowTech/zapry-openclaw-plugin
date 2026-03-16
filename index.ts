@@ -146,9 +146,9 @@ const plugin = {
       },
       execute: async (_toolCallId: string, args: Record<string, any>) => {
         try {
-          const { action, target: _t, channel: _ch, ...params } = args;
+          const { action, target: _t, channel: _ch, accountId: reqAccountId, ...params } = args ?? {};
           const cfg = await resolveRuntimeConfig(api);
-          const account = resolveZapryAccount(cfg);
+          const account = resolveZapryAccount(cfg, reqAccountId);
           const result = await handleZapryAction({
             action,
             channel: "zapry",

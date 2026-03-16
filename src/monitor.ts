@@ -18,6 +18,31 @@ export type MonitorContext = {
   };
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function summarizeUnhandledInboundUpdate(update: unknown): string {
+  const record = asRecord(update);
+  if (!record) {
+    return "non-object update payload";
+  }
+  const topKeys = Object.keys(record);
+  const messageLike =
+    asRecord(record.message) ??
+    asRecord(record.channel_post) ??
+    asRecord(record.edited_message) ??
+    asRecord(record.edited_channel_post) ??
+    asRecord((record.callback_query as any)?.message) ??
+    asRecord(record.msg) ??
+    asRecord(record.Message);
+  const messageKeys = messageLike ? Object.keys(messageLike) : [];
+  return `top_keys=${JSON.stringify(topKeys.slice(0, 20))} message_keys=${JSON.stringify(messageKeys.slice(0, 24))}`;
+}
+
 export async function monitorZapryProvider(ctx: MonitorContext): Promise<void> {
   const { account } = ctx;
   if (account.config.mode === "webhook") {
@@ -84,6 +109,7 @@ async function startPollingMode(ctx: MonitorContext): Promise<void> {
 
   let offset = 0;
   let warnedMissingInboundHandler = false;
+  let loggedUnhandledSample = false;
   let lastPollingApiError = "";
   while (!abortSignal?.aborted) {
     try {
@@ -109,6 +135,12 @@ async function startPollingMode(ctx: MonitorContext): Promise<void> {
           warnedMissingInboundHandler = true;
           log?.warn(
             `[${account.accountId}] inbound update received but no compatible handler is available`,
+          );
+        }
+        if (!handled && !loggedUnhandledSample) {
+          loggedUnhandledSample = true;
+          log?.warn(
+            `[${account.accountId}] unhandled inbound update sample: ${summarizeUnhandledInboundUpdate(update)}`,
           );
         }
         const updateId = (update as any).update_id;

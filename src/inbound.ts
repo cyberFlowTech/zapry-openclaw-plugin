@@ -126,6 +126,10 @@ const INBOUND_MEDIA_MAX_BYTES_BY_KIND: Record<ParsedInboundMediaKind, number> = 
 };
 const pendingMuteConfirmations = new Map<string, PendingMuteConfirmation>();
 
+function looksLikeHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -899,6 +903,17 @@ async function transcribeInboundAudioItems(
 }
 
 function parseMediaObject(kind: ParsedInboundMediaKind, raw: unknown): ParsedInboundMediaItem | null {
+  if (typeof raw === "string") {
+    const value = raw.trim();
+    if (!value) {
+      return null;
+    }
+    if (looksLikeHttpUrl(value)) {
+      return { kind, url: value };
+    }
+    return { kind, fileId: value };
+  }
+
   const media = asRecord(raw);
   if (!media) {
     return null;
@@ -923,9 +938,25 @@ function parseMediaObject(kind: ParsedInboundMediaKind, raw: unknown): ParsedInb
 
   const item: ParsedInboundMediaItem = {
     kind,
-    fileId: asNonEmptyString(media.file_id ?? media.fileId),
+    fileId: asNonEmptyString(
+      media.file_id ??
+        media.fileId ??
+        media.id ??
+        media.media_id ??
+        media.mediaId ??
+        media.file_token ??
+        media.fileToken,
+    ),
     fileUniqueId: asNonEmptyString(media.file_unique_id ?? media.fileUniqueId),
-    url: asNonEmptyString(media.url ?? media.remotePath ?? media.path),
+    url: asNonEmptyString(
+      media.url ??
+        media.remotePath ??
+        media.path ??
+        media.download_url ??
+        media.downloadUrl ??
+        media.file_path ??
+        media.filePath,
+    ),
     mimeType: asNonEmptyString(media.mime_type ?? media.mimeType),
     fileName: asNonEmptyString(media.file_name ?? media.fileName ?? media.name),
     fileSize: parseFiniteNumber(media.file_size ?? media.fileSize),
@@ -955,31 +986,145 @@ function mediaScore(item: ParsedInboundMediaItem): number {
   return area + (item.fileSize ?? 0);
 }
 
+function resolveMediaKindFromValue(value: unknown): ParsedInboundMediaKind | undefined {
+  const normalized = asNonEmptyString(typeof value === "string" ? value : value != null ? String(value) : undefined)?.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (
+    normalized.includes("photo") ||
+    normalized.includes("image") ||
+    normalized.includes("pic")
+  ) {
+    return "photo";
+  }
+  if (normalized.includes("video")) {
+    return "video";
+  }
+  if (normalized.includes("voice") || normalized.includes("ptt")) {
+    return "voice";
+  }
+  if (normalized.includes("audio") || normalized.includes("music")) {
+    return "audio";
+  }
+  if (normalized.includes("animation") || normalized.includes("gif")) {
+    return "animation";
+  }
+  if (normalized.includes("document") || normalized.includes("file")) {
+    return "document";
+  }
+  return undefined;
+}
+
+function parseMediaCollectionEntry(entry: unknown): ParsedInboundMediaItem | null {
+  if (typeof entry === "string") {
+    // Unknown media type string, default to document for safe downstream handling.
+    return parseMediaObject("document", entry);
+  }
+  const record = asRecord(entry);
+  if (!record) {
+    return null;
+  }
+  const inferredKind =
+    resolveMediaKindFromValue(record.kind) ??
+    resolveMediaKindFromValue(record.type) ??
+    resolveMediaKindFromValue(record.media_type) ??
+    resolveMediaKindFromValue(record.mediaType) ??
+    resolveMediaKindFromValue(record.mime_type) ??
+    resolveMediaKindFromValue(record.mimeType) ??
+    resolveMediaKindFromValue(record.file_type) ??
+    resolveMediaKindFromValue(record.fileType) ??
+    "document";
+  return parseMediaObject(inferredKind, record);
+}
+
 function extractInboundMediaItems(message: Record<string, unknown>): ParsedInboundMediaItem[] {
   const items: ParsedInboundMediaItem[] = [];
+  const dedupe = new Set<string>();
+  const pushItem = (item: ParsedInboundMediaItem | null): void => {
+    if (!item) {
+      return;
+    }
+    const key = [
+      item.kind,
+      item.fileId ?? "",
+      item.url ?? "",
+      item.fileName ?? "",
+      item.fileUniqueId ?? "",
+    ].join("|");
+    if (dedupe.has(key)) {
+      return;
+    }
+    dedupe.add(key);
+    items.push(item);
+  };
 
-  if (Array.isArray(message.photo)) {
-    const photoVariants = message.photo
+  const rawPhoto =
+    message.photo ??
+    message.Photo ??
+    message.image ??
+    message.Image ??
+    message.picture ??
+    message.Picture;
+  if (Array.isArray(rawPhoto)) {
+    const photoVariants = rawPhoto
       .map((entry) => parseMediaObject("photo", entry))
       .filter((entry): entry is ParsedInboundMediaItem => Boolean(entry));
     if (photoVariants.length > 0) {
       photoVariants.sort((a, b) => mediaScore(b) - mediaScore(a));
-      items.push(photoVariants[0]);
+      pushItem(photoVariants[0]);
+    }
+  } else {
+    pushItem(parseMediaObject("photo", rawPhoto));
+  }
+
+  const directMediaKeys: Array<{ keys: string[]; kind: ParsedInboundMediaKind }> = [
+    { keys: ["video", "Video"], kind: "video" },
+    { keys: ["document", "Document", "file", "File"], kind: "document" },
+    { keys: ["audio", "Audio"], kind: "audio" },
+    { keys: ["voice", "Voice"], kind: "voice" },
+    { keys: ["animation", "Animation", "gif", "Gif"], kind: "animation" },
+  ];
+  for (const { keys, kind } of directMediaKeys) {
+    for (const key of keys) {
+      const parsed = parseMediaObject(kind, message[key]);
+      if (parsed) {
+        pushItem(parsed);
+        break;
+      }
     }
   }
 
-  const directMediaKeys: Array<{ key: string; kind: ParsedInboundMediaKind }> = [
-    { key: "video", kind: "video" },
-    { key: "document", kind: "document" },
-    { key: "audio", kind: "audio" },
-    { key: "voice", kind: "voice" },
-    { key: "animation", kind: "animation" },
+  const collectionCandidates = [
+    message.media_items,
+    message.mediaItems,
+    message.MediaItems,
+    message.attachments,
+    message.Attachments,
+    message.files,
+    message.media,
   ];
-  for (const { key, kind } of directMediaKeys) {
-    const parsed = parseMediaObject(kind, message[key]);
-    if (parsed) {
-      items.push(parsed);
+  for (const candidate of collectionCandidates) {
+    if (!Array.isArray(candidate)) {
+      continue;
     }
+    for (const entry of candidate) {
+      pushItem(parseMediaCollectionEntry(entry));
+    }
+  }
+
+  const singularCandidates = [
+    message.media_item,
+    message.mediaItem,
+    message.attachment,
+    message.Attachment,
+    Array.isArray(message.media) ? undefined : message.media,
+  ];
+  for (const candidate of singularCandidates) {
+    if (candidate === undefined || candidate === null) {
+      continue;
+    }
+    pushItem(parseMediaCollectionEntry(candidate));
   }
 
   return items;
@@ -2461,33 +2606,93 @@ function buildInboundBody(
 }
 
 function parseInboundMessage(update: any): ParsedInboundMessage | null {
-  const message = asRecord(update?.message);
+  const updateRecord = asRecord(update);
+  let message =
+    asRecord(updateRecord?.message) ??
+    asRecord(updateRecord?.channel_post) ??
+    asRecord(updateRecord?.edited_message) ??
+    asRecord(updateRecord?.edited_channel_post) ??
+    asRecord(asRecord(updateRecord?.callback_query)?.message) ??
+    asRecord(updateRecord?.msg) ??
+    asRecord(updateRecord?.Message);
+  if (!message && updateRecord) {
+    const looksLikeMessageEnvelope =
+      updateRecord.text !== undefined ||
+      updateRecord.caption !== undefined ||
+      updateRecord.photo !== undefined ||
+      updateRecord.Photo !== undefined ||
+      updateRecord.video !== undefined ||
+      updateRecord.Video !== undefined ||
+      updateRecord.document !== undefined ||
+      updateRecord.Document !== undefined ||
+      updateRecord.audio !== undefined ||
+      updateRecord.Audio !== undefined ||
+      updateRecord.voice !== undefined ||
+      updateRecord.Voice !== undefined ||
+      updateRecord.animation !== undefined ||
+      updateRecord.Animation !== undefined ||
+      updateRecord.media !== undefined ||
+      updateRecord.attachments !== undefined ||
+      updateRecord.files !== undefined ||
+      updateRecord.media_items !== undefined ||
+      updateRecord.MediaItems !== undefined;
+    if (looksLikeMessageEnvelope) {
+      message = updateRecord;
+    }
+  }
   if (!message) {
     return null;
   }
 
-  const sourceText = asNonEmptyString(message.text) ?? asNonEmptyString(message.caption);
+  const sourceText =
+    asNonEmptyString(message.text) ??
+    asNonEmptyString(message.Text) ??
+    asNonEmptyString(message.caption) ??
+    asNonEmptyString(message.Caption) ??
+    asNonEmptyString(message.content) ??
+    asNonEmptyString(message.Content) ??
+    asNonEmptyString(message.message) ??
+    asNonEmptyString(message.Message);
   const mediaItems = extractInboundMediaItems(message);
   const targetUserHints = extractTargetUserHints(message, sourceText);
   if (!sourceText && mediaItems.length === 0) {
     return null;
   }
 
-  const chat = (message.chat ?? {}) as Record<string, unknown>;
-  const from = (message.from ?? message.sender ?? {}) as Record<string, unknown>;
+  const chat =
+    asRecord(message.chat) ??
+    asRecord(message.Chat) ??
+    asRecord(message.conversation) ??
+    asRecord(message.Conversation) ??
+    {};
+  const from =
+    asRecord(message.from) ??
+    asRecord(message.From) ??
+    asRecord(message.sender) ??
+    asRecord(message.Sender) ??
+    asRecord(message.user) ??
+    {};
 
   const chatId =
     asNonEmptyString(chat.id != null ? String(chat.id) : undefined) ??
     asNonEmptyString(message.chat_id != null ? String(message.chat_id) : undefined) ??
-    asNonEmptyString(message.chatId != null ? String(message.chatId) : undefined);
+    asNonEmptyString(message.chatId != null ? String(message.chatId) : undefined) ??
+    asNonEmptyString(message.conversation_id != null ? String(message.conversation_id) : undefined) ??
+    asNonEmptyString(message.conversationId != null ? String(message.conversationId) : undefined) ??
+    asNonEmptyString(message.to_id != null ? String(message.to_id) : undefined) ??
+    asNonEmptyString(message.toId != null ? String(message.toId) : undefined);
   if (!chatId) {
     return null;
   }
 
   const senderId =
     asNonEmptyString(from.id != null ? String(from.id) : undefined) ??
+    asNonEmptyString(from.user_id != null ? String(from.user_id) : undefined) ??
+    asNonEmptyString(from.userId != null ? String(from.userId) : undefined) ??
     asNonEmptyString(message.sender_id != null ? String(message.sender_id) : undefined) ??
+    asNonEmptyString(message.senderId != null ? String(message.senderId) : undefined) ??
     asNonEmptyString(message.from_id != null ? String(message.from_id) : undefined) ??
+    asNonEmptyString(message.fromId != null ? String(message.fromId) : undefined) ??
     chatId;
 
   const senderName =
@@ -2503,7 +2708,9 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     chatType === "channel" ||
     chatId !== senderId;
 
-  const messageSid = String(message.message_id ?? update?.update_id ?? Date.now());
+  const messageSid = String(
+    message.message_id ?? message.messageId ?? message.id ?? update?.update_id ?? Date.now(),
+  );
 
   return {
     sourceText,
@@ -2517,7 +2724,9 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     messageSid,
     timestampMs:
       parseTimestampMs(message.date) ??
+      parseTimestampMs(message.time) ??
       parseTimestampMs(message.timestamp) ??
+      parseTimestampMs(update?.edit_date) ??
       parseTimestampMs(update?.date),
   };
 }
@@ -2934,6 +3143,9 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   }
 
   statusSink?.({ lastInboundAt: Date.now() });
+
+  const typingClient = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  typingClient.sendChatAction(parsed.chatId, "typing").catch(() => {});
 
   await dispatchReply({
     ctx: ctxPayload,
