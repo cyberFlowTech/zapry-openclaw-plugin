@@ -207,10 +207,14 @@ export const zapryPlugin = {
         ctx.log?.info(`[${account.accountId}] presence set to offline`);
       });
 
+      const effectiveRuntime = ctx.channelRuntime
+        ? { ...ctx.runtime, channel: ctx.channelRuntime }
+        : ctx.runtime;
+
       return monitorZapryProvider({
         account,
         cfg: ctx.cfg,
-        runtime: ctx.runtime,
+        runtime: effectiveRuntime,
         abortSignal: ctx.abortSignal,
         onUpdate: ctx.onUpdate,
         onMessage: ctx.onMessage,
