@@ -97,6 +97,10 @@ export class ZapryApiClient {
     return this.post("sendAnimation", { chat_id: chatId, animation });
   }
 
+  async sendChatAction(chatId: string, action: string) {
+    return this.post("sendChatAction", { chat_id: chatId, action });
+  }
+
   async deleteMessage(chatId: string, messageId: string) {
     return this.post("deleteMessage", { chat_id: chatId, message_id: messageId });
   }

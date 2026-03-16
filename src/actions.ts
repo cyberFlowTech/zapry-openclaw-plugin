@@ -85,6 +85,7 @@ const ACTION_ALIASES: Record<string, string> = {
   getmyclubs: "get-my-clubs",
   createclub: "create-club",
   updateclub: "update-club",
+
   sendchataction: "send-chat-action",
 };
 
