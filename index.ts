@@ -1,3 +1,38 @@
+if (typeof globalThis.DOMMatrix === "undefined") {
+  (globalThis as any).DOMMatrix = class DOMMatrix {
+    a: number; b: number; c: number; d: number; e: number; f: number;
+    m11: number; m12: number; m21: number; m22: number; m41: number; m42: number;
+    is2D = true; isIdentity = false;
+    constructor(init?: number[] | string) {
+      const v = Array.isArray(init) ? init : [];
+      this.a = this.m11 = v[0] ?? 1; this.b = this.m12 = v[1] ?? 0;
+      this.c = this.m21 = v[2] ?? 0; this.d = this.m22 = v[3] ?? 1;
+      this.e = this.m41 = v[4] ?? 0; this.f = this.m42 = v[5] ?? 0;
+    }
+    inverse() { return new DOMMatrix(); }
+    multiply() { return new DOMMatrix(); }
+    scale() { return new DOMMatrix(); }
+    translate() { return new DOMMatrix(); }
+    transformPoint(p?: any) { return { x: p?.x ?? 0, y: p?.y ?? 0, z: 0, w: 1 }; }
+    static fromMatrix() { return new DOMMatrix(); }
+    static fromFloat32Array(a: Float32Array) { return new DOMMatrix(Array.from(a)); }
+    static fromFloat64Array(a: Float64Array) { return new DOMMatrix(Array.from(a)); }
+  };
+}
+
+try {
+  const { createRequire } = require("node:module");
+  const { pathToFileURL } = require("node:url");
+  const _r = createRequire(require("node:path").join(process.cwd(), "package.json"));
+  const _pdfjsAbs = _r.resolve("pdfjs-dist/legacy/build/pdf.mjs");
+  const _workerAbs = _r.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  import(pathToFileURL(_pdfjsAbs).href).then((pdfjs: any) => {
+    if (pdfjs?.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+      pdfjs.GlobalWorkerOptions.workerSrc = _workerAbs;
+    }
+  }).catch(() => {});
+} catch {}
+
 import { zapryPlugin } from "./src/channel.js";
 import { setZapryRuntime } from "./src/runtime.js";
 import { resolveZapryAccount } from "./src/config.js";

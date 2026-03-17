@@ -767,6 +767,47 @@ async function appendVideoPosterFallbackItems(
   return output;
 }
 
+async function whisperTranscribeDirect(
+  filePath: string,
+  mime?: string,
+  log?: RuntimeLog,
+): Promise<string | undefined> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    log?.warn?.("[zapry] STT direct: OPENAI_API_KEY not set");
+    return undefined;
+  }
+  const model = "whisper-1";
+  const fileBuffer = await fs.readFile(filePath);
+  const fileName = path.basename(filePath);
+  const boundary = `----FormBoundary${randomUUID().replace(/-/g, "")}`;
+  const parts: Buffer[] = [];
+  const enc = (s: string) => Buffer.from(s, "utf-8");
+
+  parts.push(enc(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`));
+  parts.push(enc(`--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nzh\r\n`));
+  parts.push(enc(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${mime || "audio/mp4"}\r\n\r\n`));
+  parts.push(fileBuffer);
+  parts.push(enc(`\r\n--${boundary}--\r\n`));
+
+  const body = Buffer.concat(parts);
+  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    log?.warn?.(`[zapry] STT direct: API error ${resp.status}: ${errText.slice(0, 200)}`);
+    return undefined;
+  }
+  const json = (await resp.json()) as { text?: string };
+  return json.text?.trim() || undefined;
+}
+
 function resolveInboundSttRuntime(runtime: any):
   | {
       transcribeAudioFile: (params: {
@@ -777,11 +818,28 @@ function resolveInboundSttRuntime(runtime: any):
       }) => Promise<{ text?: string }>;
     }
   | null {
-  const transcribeAudioFile = runtime?.stt?.transcribeAudioFile;
-  if (typeof transcribeAudioFile !== "function") {
-    return null;
+  const coreTranscribe = runtime?.stt?.transcribeAudioFile;
+  if (typeof coreTranscribe === "function") {
+    return { transcribeAudioFile: coreTranscribe };
   }
-  return { transcribeAudioFile };
+  try {
+    const registrationRuntime = getZapryRuntime();
+    const fallback = registrationRuntime?.stt?.transcribeAudioFile;
+    if (typeof fallback === "function") {
+      return { transcribeAudioFile: fallback };
+    }
+  } catch {
+    // registration runtime not available
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      transcribeAudioFile: async (params) => {
+        const text = await whisperTranscribeDirect(params.filePath, params.mime);
+        return { text };
+      },
+    };
+  }
+  return null;
 }
 
 async function stageInboundMediaItems(
@@ -868,6 +926,7 @@ async function transcribeInboundAudioItems(
   }
   const sttRuntime = resolveInboundSttRuntime(runtime);
   if (!sttRuntime) {
+    log?.warn?.("[zapry] STT runtime not available, audio will not be transcribed");
     return { mediaItems };
   }
 
@@ -877,16 +936,21 @@ async function transcribeInboundAudioItems(
         return item;
       }
       try {
+        const mime = item.stagedMimeType ?? item.mimeType ?? item.resolvedFile?.contentType;
         const result = await withTimeout(
           sttRuntime.transcribeAudioFile({
             filePath: item.stagedPath,
             cfg,
-            mime: item.stagedMimeType ?? item.mimeType ?? item.resolvedFile?.contentType,
+            mime,
           }),
           INBOUND_AUDIO_TRANSCRIBE_TIMEOUT_MS,
           `transcribe inbound audio ${item.fileId ?? item.kind}`,
         );
-        const transcript = result?.text?.trim();
+        let transcript = result?.text?.trim();
+        if (!transcript && item.stagedPath) {
+          log?.warn?.(`[zapry] STT core returned empty, falling back to direct Whisper for ${item.fileId ?? item.kind}`);
+          transcript = await whisperTranscribeDirect(item.stagedPath, mime, log);
+        }
         if (!transcript) {
           return {
             ...item,
