@@ -66,6 +66,7 @@ type RecentContextItem = {
   type: string;
   text?: string;
   media_url?: string;
+  file_id?: string;
   timestamp: number;
 };
 
@@ -75,6 +76,7 @@ type EnrichedReplyInfo = {
   mediaUrl?: string;
   mediaType?: string;
   senderId?: string;
+  fileId?: string;
 };
 
 type ParsedInboundMessage = {
@@ -2495,8 +2497,8 @@ function formatRecentContextSection(recentContext: RecentContextItem[]): string 
     if (item.text) {
       parts.push(item.text.length > 200 ? item.text.slice(0, 200) + "..." : item.text);
     }
-    if (item.media_url) {
-      parts.push(`media: ${item.media_url}`);
+    if (item.file_id) {
+      parts.push(`[媒体已作为附件提供]`);
     }
     lines.push(`  - ${parts.join(" | ")}`);
   }
@@ -2512,8 +2514,8 @@ function formatEnrichedReplySection(reply: EnrichedReplyInfo): string {
   if (reply.text) {
     lines.push(`  - 文本: ${reply.text}`);
   }
-  if (reply.mediaUrl) {
-    lines.push(`  - 媒体(${reply.mediaType ?? "file"}): ${reply.mediaUrl}`);
+  if (reply.fileId) {
+    lines.push(`  - 媒体(${reply.mediaType ?? "file"}): [已作为附件提供]`);
   }
   return lines.join("\n");
 }
@@ -2795,13 +2797,15 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     const rpMediaType = asNonEmptyString(rp.media_type ?? rp.mediaType);
     const rpSenderId = asNonEmptyString(rp.sender_id ?? rp.senderId);
     const rpMessageId = asNonEmptyString(rp.message_id ?? rp.messageId);
-    if (rpText || rpMediaUrl) {
+    const rpFileId = asNonEmptyString(rp.file_id ?? rp.fileId);
+    if (rpText || rpMediaUrl || rpFileId) {
       enrichedReply = {
         messageId: rpMessageId,
         text: rpText,
         mediaUrl: rpMediaUrl,
         mediaType: rpMediaType,
         senderId: rpSenderId,
+        fileId: rpFileId,
       };
     }
   }
@@ -2867,6 +2871,45 @@ async function resolveInboundFile(
     log?.warn?.(`[zapry] resolve inbound file threw for ${fileId}: ${message}`);
     return { fileId, error: message };
   }
+}
+
+const CONTEXT_MEDIA_MAX_ITEMS = 3;
+
+function contextTypeToMediaKind(type: string): ParsedInboundMediaKind | undefined {
+  switch (type) {
+    case "image": return "photo";
+    case "video": return "video";
+    case "file":  return "document";
+    case "audio": return "audio";
+    default:      return undefined;
+  }
+}
+
+function buildContextMediaItems(
+  recentContext?: RecentContextItem[],
+  enrichedReply?: EnrichedReplyInfo,
+): ParsedInboundMediaItem[] {
+  const items: ParsedInboundMediaItem[] = [];
+
+  if (enrichedReply?.fileId) {
+    const kind = contextTypeToMediaKind(enrichedReply.mediaType ?? "file") ?? "document";
+    items.push({ kind, fileId: enrichedReply.fileId });
+  }
+
+  if (recentContext?.length) {
+    let added = 0;
+    for (const ctx of recentContext) {
+      if (added >= CONTEXT_MEDIA_MAX_ITEMS) break;
+      if (!ctx.file_id) continue;
+      const kind = contextTypeToMediaKind(ctx.type);
+      if (!kind) continue;
+      if (items.some((it) => it.fileId === ctx.file_id)) continue;
+      items.push({ kind, fileId: ctx.file_id });
+      added++;
+    }
+  }
+
+  return items;
 }
 
 async function enrichInboundMediaItems(
@@ -3112,7 +3155,9 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   }
 
   const cfg = resolveConfig(params.cfg, runtime);
-  const resolvedMediaItems = await enrichInboundMediaItems(account, parsed.mediaItems, log);
+  const contextMediaItems = buildContextMediaItems(parsed.recentContext, parsed.enrichedReply);
+  const allMediaItems = [...parsed.mediaItems, ...contextMediaItems];
+  const resolvedMediaItems = await enrichInboundMediaItems(account, allMediaItems, log);
   const expandedMediaItems = appendVideoThumbnailMediaItems(resolvedMediaItems);
   const stagedMediaItems = await stageInboundMediaItems(runtime, expandedMediaItems, log);
   const finalizedMediaItems = await appendVideoKeyframeItems(runtime, stagedMediaItems, log);
