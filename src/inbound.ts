@@ -2901,8 +2901,7 @@ function buildContextMediaItems(
     for (const ctx of recentContext) {
       if (added >= CONTEXT_MEDIA_MAX_ITEMS) break;
       if (!ctx.file_id) continue;
-      const kind = contextTypeToMediaKind(ctx.type);
-      if (!kind) continue;
+      const kind = contextTypeToMediaKind(ctx.type) ?? "document";
       if (items.some((it) => it.fileId === ctx.file_id)) continue;
       items.push({ kind, fileId: ctx.file_id });
       added++;
