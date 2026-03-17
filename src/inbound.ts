@@ -59,6 +59,24 @@ type ParsedInboundMediaItem = {
   sourceTag?: "video-thumb" | "video-keyframe";
 };
 
+type RecentContextItem = {
+  message_id: string;
+  sender_id: string;
+  sender_name?: string;
+  type: string;
+  text?: string;
+  media_url?: string;
+  timestamp: number;
+};
+
+type EnrichedReplyInfo = {
+  messageId?: string;
+  text?: string;
+  mediaUrl?: string;
+  mediaType?: string;
+  senderId?: string;
+};
+
 type ParsedInboundMessage = {
   sourceText?: string;
   mediaItems: ParsedInboundMediaItem[];
@@ -70,6 +88,8 @@ type ParsedInboundMessage = {
   isGroup: boolean;
   messageSid: string;
   timestampMs?: number;
+  recentContext?: RecentContextItem[];
+  enrichedReply?: EnrichedReplyInfo;
 };
 
 type InboundTargetUserHint = {
@@ -2463,20 +2483,66 @@ function summarizeMediaItem(item: ParsedInboundMediaItem): string {
   return parts.join(" | ");
 }
 
+function formatRecentContextSection(recentContext: RecentContextItem[]): string {
+  const lines: string[] = ["[最近群聊消息上下文]"];
+  lines.push("- 以下是本群最近的消息记录（从新到旧），帮助你理解当前对话背景：");
+  for (const item of recentContext) {
+    const sender = item.sender_name || item.sender_id;
+    const parts: string[] = [`${sender}`];
+    if (item.type !== "text") {
+      parts.push(`[${item.type}]`);
+    }
+    if (item.text) {
+      parts.push(item.text.length > 200 ? item.text.slice(0, 200) + "..." : item.text);
+    }
+    if (item.media_url) {
+      parts.push(`media: ${item.media_url}`);
+    }
+    lines.push(`  - ${parts.join(" | ")}`);
+  }
+  return lines.join("\n");
+}
+
+function formatEnrichedReplySection(reply: EnrichedReplyInfo): string {
+  const lines: string[] = ["[被引用消息内容]"];
+  lines.push("- 用户回复引用了以下消息，请结合该消息内容理解用户意图：");
+  if (reply.senderId) {
+    lines.push(`  - 发送者: ${reply.senderId}`);
+  }
+  if (reply.text) {
+    lines.push(`  - 文本: ${reply.text}`);
+  }
+  if (reply.mediaUrl) {
+    lines.push(`  - 媒体(${reply.mediaType ?? "file"}): ${reply.mediaUrl}`);
+  }
+  return lines.join("\n");
+}
+
 function buildInboundBody(
   sourceText: string | undefined,
   mediaItems: ParsedInboundMediaItem[],
   transcript?: string,
   targetUserHints: InboundTargetUserHint[] = [],
+  recentContext?: RecentContextItem[],
+  enrichedReply?: EnrichedReplyInfo,
 ): string {
+  const contextSections: string[] = [];
+  if (enrichedReply) {
+    contextSections.push(formatEnrichedReplySection(enrichedReply));
+  }
+  if (recentContext && recentContext.length > 0) {
+    contextSections.push(formatRecentContextSection(recentContext));
+  }
+  const contextBlock = contextSections.length > 0 ? "\n\n" + contextSections.join("\n\n") : "";
+
   const normalizedText = sourceText?.trim();
   const transcriptRequested = isExplicitTranscriptRequest(normalizedText);
   if (!mediaItems.length) {
     if (!normalizedText && targetUserHints.length === 0) {
-      return "";
+      return contextBlock.trim();
     }
     if (targetUserHints.length === 0) {
-      return normalizedText ?? "";
+      return (normalizedText ?? "") + contextBlock;
     }
     const lines: string[] = [];
     if (normalizedText) {
@@ -2497,7 +2563,7 @@ function buildInboundBody(
       JSON.stringify({ targetUsers: targetUserHints }, null, 2),
       "```",
     );
-    return lines.join("\n");
+    return lines.join("\n") + contextBlock;
   }
   const stageErrors = mediaItems
     .map((item) => item.stageError)
@@ -2602,7 +2668,7 @@ function buildInboundBody(
     structuredPayload.targetUsers = targetUserHints;
   }
   lines.push("", "[媒体结构化数据]", "```json", JSON.stringify(structuredPayload, null, 2), "```");
-  return lines.join("\n");
+  return lines.join("\n") + contextBlock;
 }
 
 function parseInboundMessage(update: any): ParsedInboundMessage | null {
@@ -2712,6 +2778,34 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     message.message_id ?? message.messageId ?? message.id ?? update?.update_id ?? Date.now(),
   );
 
+  let recentContext: RecentContextItem[] | undefined;
+  const rawRecentContext = message.recent_context ?? message.recentContext;
+  if (Array.isArray(rawRecentContext) && rawRecentContext.length > 0) {
+    recentContext = rawRecentContext.filter(
+      (item: any) => item && typeof item === "object" && item.message_id,
+    ) as RecentContextItem[];
+    if (recentContext.length === 0) recentContext = undefined;
+  }
+
+  let enrichedReply: EnrichedReplyInfo | undefined;
+  const rp = asRecord(message.reply_parameters ?? message.replyParameters);
+  if (rp) {
+    const rpText = asNonEmptyString(rp.text);
+    const rpMediaUrl = asNonEmptyString(rp.media_url ?? rp.mediaUrl);
+    const rpMediaType = asNonEmptyString(rp.media_type ?? rp.mediaType);
+    const rpSenderId = asNonEmptyString(rp.sender_id ?? rp.senderId);
+    const rpMessageId = asNonEmptyString(rp.message_id ?? rp.messageId);
+    if (rpText || rpMediaUrl) {
+      enrichedReply = {
+        messageId: rpMessageId,
+        text: rpText,
+        mediaUrl: rpMediaUrl,
+        mediaType: rpMediaType,
+        senderId: rpSenderId,
+      };
+    }
+  }
+
   return {
     sourceText,
     mediaItems,
@@ -2728,6 +2822,8 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
       parseTimestampMs(message.timestamp) ??
       parseTimestampMs(update?.edit_date) ??
       parseTimestampMs(update?.date),
+    recentContext,
+    enrichedReply,
   };
 }
 
@@ -3027,6 +3123,8 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     agentMediaItems,
     transcript,
     parsed.targetUserHints,
+    parsed.recentContext,
+    parsed.enrichedReply,
   );
   if (!rawBody) {
     return false;
