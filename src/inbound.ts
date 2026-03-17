@@ -2453,9 +2453,6 @@ function summarizeMediaItem(item: ParsedInboundMediaItem): string {
   } else if (item.sourceTag === "video-keyframe") {
     parts.push("source=video_keyframe");
   }
-  if (item.fileId) {
-    parts.push(`file_id=${item.fileId}`);
-  }
   if (item.url) {
     parts.push(`url=${item.url}`);
   }
@@ -2585,8 +2582,8 @@ function buildInboundBody(
   } else {
     lines.push("- 用户未附加文字时，默认直接理解并分析媒体内容，不要先追问是否需要解析。");
   }
-  lines.push("- 如果结构化数据里已经有 file_id，优先把它视为主读取链路，不要依赖兼容 URL。");
-  lines.push("- 插件会在内部完成 get-file 与媒体下载；模型不应再把 URL 当成主链路。");
+  lines.push("- 媒体文件已下载到本地，请使用 [media attached: ...] 中的本地路径来读取/分析文件内容。");
+  lines.push("- 对于 PDF 文件，使用 pdf 工具并传入 [media attached: ...] 中显示的本地文件路径。");
   if (mediaItems.length > 0 && mediaItems.every((item) => isAudioLikeMedia(item))) {
     lines.push("- 若这是纯语音/音频消息，默认本轮直接输出转写；若还能总结，再补 1-3 条要点。");
     lines.push("- 禁止只回复“我已收到”“我现在开始转写”“稍后给你结果”之类进度说明。");
@@ -2665,7 +2662,13 @@ function buildInboundBody(
     lines.push(`- ${summarizeMediaItem(item)}`);
   }
 
-  const structuredPayload: Record<string, unknown> = { media: mediaItems };
+  const sanitizedMedia = mediaItems.map(({ fileId, resolvedFile, resolvedThumbFile, ...rest }) => ({
+    ...rest,
+    ...(resolvedFile?.contentType ? { contentType: resolvedFile.contentType } : {}),
+    ...(resolvedFile?.fileSize !== undefined ? { fileSize: resolvedFile.fileSize } : {}),
+    ...(resolvedFile?.fileName ? { fileName: resolvedFile.fileName } : {}),
+  }));
+  const structuredPayload: Record<string, unknown> = { media: sanitizedMedia };
   if (targetUserHints.length > 0) {
     structuredPayload.targetUsers = targetUserHints;
   }
