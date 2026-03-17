@@ -2955,12 +2955,17 @@ function contextTypeToMediaKind(type: string): ParsedInboundMediaKind | undefine
 function buildContextMediaItems(
   recentContext?: RecentContextItem[],
   enrichedReply?: EnrichedReplyInfo,
+  existingMediaItems?: ParsedInboundMediaItem[],
 ): ParsedInboundMediaItem[] {
   const items: ParsedInboundMediaItem[] = [];
+  const existingFileIds = new Set(
+    (existingMediaItems ?? []).map((m) => m.fileId).filter(Boolean),
+  );
 
-  if (enrichedReply?.fileId) {
+  if (enrichedReply?.fileId && !existingFileIds.has(enrichedReply.fileId)) {
     const kind = contextTypeToMediaKind(enrichedReply.mediaType ?? "file") ?? "document";
     items.push({ kind, fileId: enrichedReply.fileId });
+    existingFileIds.add(enrichedReply.fileId);
   }
 
   if (recentContext?.length) {
@@ -2968,9 +2973,10 @@ function buildContextMediaItems(
     for (const ctx of recentContext) {
       if (added >= CONTEXT_MEDIA_MAX_ITEMS) break;
       if (!ctx.file_id) continue;
+      if (existingFileIds.has(ctx.file_id)) continue;
       const kind = contextTypeToMediaKind(ctx.type) ?? "document";
-      if (items.some((it) => it.fileId === ctx.file_id)) continue;
       items.push({ kind, fileId: ctx.file_id });
+      existingFileIds.add(ctx.file_id);
       added++;
     }
   }
@@ -3221,7 +3227,7 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   }
 
   const cfg = resolveConfig(params.cfg, runtime);
-  const contextMediaItems = buildContextMediaItems(parsed.recentContext, parsed.enrichedReply);
+  const contextMediaItems = buildContextMediaItems(parsed.recentContext, parsed.enrichedReply, parsed.mediaItems);
   const allMediaItems = [...parsed.mediaItems, ...contextMediaItems];
   const resolvedMediaItems = await enrichInboundMediaItems(account, allMediaItems, log);
   const expandedMediaItems = appendVideoThumbnailMediaItems(resolvedMediaItems);
