@@ -20,7 +20,7 @@ export const zapryPlugin = {
   },
 
   capabilities: {
-    chatTypes: ["direct", "channel"] as const,
+    chatTypes: ["direct", "channel", "group"] as const,
     polls: false,
     reactions: false,
     threads: false,
@@ -86,8 +86,11 @@ export const zapryPlugin = {
 
   agentPrompt: {
     messageToolHints: () => [
-      `For Zapry, use "message" tool only for sending chat messages with action "send". ` +
-      `For all non-messaging Zapry operations, use "zapry_action". ` +
+      `For Zapry, use "message" tool for sending text chat messages (action "send"). ` +
+      `For sending photos/videos/audio/documents to any chat (group or DM), use "zapry_action" with ` +
+      `action "send-photo"/"send-video"/"send-audio"/"send-document"/"send-voice"/"send-animation". ` +
+      `External image URLs are auto-downloaded — just pass the URL as the media field. ` +
+      `For all other non-messaging operations (profile, groups, feed queries, etc.), use "zapry_action". ` +
       `To publish to feed (广场), use "zapry_post" with content and optional images.`,
     ],
   },
@@ -98,10 +101,16 @@ export const zapryPlugin = {
     ],
     extractToolSend: (ctx: any) => {
       if (ctx.action === "send" || ctx.action === "send-message") {
-        return {
+        const result: Record<string, any> = {
           to: ctx.params?.to ?? ctx.params?.chatId ?? ctx.params?.chat_id,
           text: ctx.params?.message ?? ctx.params?.text,
         };
+        const mediaUrl =
+          ctx.params?.photo ?? ctx.params?.video ?? ctx.params?.animation ??
+          ctx.params?.document ?? ctx.params?.audio ?? ctx.params?.voice ??
+          ctx.params?.mediaUrl ?? ctx.params?.media_url ?? ctx.params?.media;
+        if (mediaUrl) result.mediaUrl = mediaUrl;
+        return result;
       }
       return null;
     },

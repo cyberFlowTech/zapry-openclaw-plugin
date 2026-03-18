@@ -38,7 +38,10 @@ import { setZapryRuntime } from "./src/runtime.js";
 import { resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
 
-const ZAPRY_NON_MESSAGE_ACTIONS = [
+const ZAPRY_ACTION_TOOL_ACTIONS = [
+  "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation",
+  "generate-audio",
+  "delete-message", "answer-callback-query",
   "get-file", "get-my-profile", "get-me",
   "get-my-groups", "get-my-chats",
   "get-chat-member", "get-chat-members", "get-chat-member-count", "get-chat-administrators",
@@ -50,8 +53,8 @@ const ZAPRY_NON_MESSAGE_ACTIONS = [
   "set-my-name", "set-my-description",
   "get-trending-posts", "get-latest-posts", "get-my-posts", "search-posts",
   "delete-post", "comment-post", "like-post", "share-post",
-  "generate-audio",
   "get-updates", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
+  "get-chat-history",
 ] as const;
 
 async function resolveRuntimeConfig(api: any): Promise<any> {
@@ -126,13 +129,16 @@ const plugin = {
       name: "zapry_action",
       label: "Zapry Platform Action",
       description:
-        "Execute a Zapry platform action that does NOT involve sending a chat message. " +
-        "Use this for: profile queries (get-my-profile, get-me), friend operations " +
+        "Execute a Zapry platform action. Use this for: " +
+        "sending media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups — " +
+        "external image URLs are auto-downloaded, just pass the URL; " +
+        "profile queries (get-my-profile, get-me), friend operations " +
         "(get-my-friend-requests, accept-friend-request, add-friend, etc.), " +
         "group management (get-chat-members, mute-chat-member, kick-chat-member, etc.), " +
         "feed reading (get-trending-posts, get-latest-posts, search-posts, etc.), " +
         "feed interactions (delete-post, comment-post, like-post, share-post), " +
         "bot settings (set-my-soul, set-my-skills, set-my-name, etc.), " +
+        "chat history (get-chat-history), " +
         "and webhook/file operations (get-file, set-webhook, get-updates, etc.). " +
         "Pass the action name and action-specific parameters as top-level fields.",
       parameters: {
@@ -141,7 +147,7 @@ const plugin = {
           action: {
             type: "string" as const,
             description: "The Zapry action to execute",
-            enum: [...ZAPRY_NON_MESSAGE_ACTIONS],
+            enum: [...ZAPRY_ACTION_TOOL_ACTIONS],
           },
           chat_id: {
             type: "string" as const,
@@ -163,9 +169,37 @@ const plugin = {
             type: "string" as const,
             description: "Post/dynamic ID (for delete-post, comment-post, like-post, share-post)",
           },
+          photo: {
+            type: "string" as const,
+            description: "Photo source: external URL (auto-downloaded), data URI, local path, or /_temp/media URL (for send-photo)",
+          },
+          video: {
+            type: "string" as const,
+            description: "Video source (for send-video)",
+          },
+          document: {
+            type: "string" as const,
+            description: "Document source (for send-document)",
+          },
+          audio: {
+            type: "string" as const,
+            description: "Audio source (for send-audio)",
+          },
+          voice: {
+            type: "string" as const,
+            description: "Voice source (for send-voice)",
+          },
+          animation: {
+            type: "string" as const,
+            description: "Animation/GIF source (for send-animation)",
+          },
           content: {
             type: "string" as const,
             description: "Text content (for comment-post)",
+          },
+          limit: {
+            type: "number" as const,
+            description: "Limit for results (for get-chat-history, default 50, max 50)",
           },
           page: {
             type: "number" as const,

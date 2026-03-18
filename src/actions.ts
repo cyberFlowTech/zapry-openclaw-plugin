@@ -86,6 +86,8 @@ const ACTION_ALIASES: Record<string, string> = {
   createclub: "create-club",
   updateclub: "update-club",
 
+  getchathistory: "get-chat-history",
+
   sendchataction: "send-chat-action",
 };
 
@@ -169,17 +171,17 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
         }),
       );
     case "send-photo":
-      return wrap(client.sendPhoto(normalized.chat_id, normalized.photo));
+      return sendMediaWithAutoDownload(normalized.photo, "photo", (m) => client.sendPhoto(normalized.chat_id, m));
     case "send-video":
-      return wrap(client.sendVideo(normalized.chat_id, normalized.video));
+      return sendMediaWithAutoDownload(normalized.video, "video", (m) => client.sendVideo(normalized.chat_id, m));
     case "send-document":
-      return wrap(client.sendDocument(normalized.chat_id, normalized.document));
+      return sendMediaWithAutoDownload(normalized.document, "document", (m) => client.sendDocument(normalized.chat_id, m));
     case "send-audio":
-      return wrap(client.sendAudio(normalized.chat_id, normalized.audio));
+      return sendMediaWithAutoDownload(normalized.audio, "audio", (m) => client.sendAudio(normalized.chat_id, m));
     case "send-voice":
-      return wrap(client.sendVoice(normalized.chat_id, normalized.voice));
+      return sendMediaWithAutoDownload(normalized.voice, "voice", (m) => client.sendVoice(normalized.chat_id, m));
     case "send-animation":
-      return wrap(client.sendAnimation(normalized.chat_id, normalized.animation));
+      return sendMediaWithAutoDownload(normalized.animation, "animation", (m) => client.sendAnimation(normalized.chat_id, m));
     case "generate-audio":
       return handleGenerateAudioAction(client, normalized);
     case "send-chat-action":
@@ -299,6 +301,10 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
     case "share-post":
       return wrap(client.sharePost(normalized.dynamic_id));
 
+    // ── Chat History ──
+    case "get-chat-history":
+      return wrap(client.getChatHistory(normalized.chat_id, normalized.limit));
+
     // ── Clubs ──
     case "get-my-clubs":
       return wrap(client.getMyClubs(normalized.page, normalized.page_size));
@@ -337,6 +343,29 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
 
     default:
       return { ok: false, error: `unknown zapry action: ${action}` };
+  }
+}
+
+async function sendMediaWithAutoDownload(
+  rawSource: string,
+  fieldName: string,
+  sender: (resolvedSource: string) => Promise<any>,
+): Promise<ActionResult> {
+  if (!isNonEmptyString(rawSource)) {
+    return { ok: false, error: `missing required params: ${fieldName}` };
+  }
+  try {
+    const resolved = await materializeSendMediaSource(rawSource.trim(), {
+      allowExternalHttpImages: true,
+      sourceLabel: fieldName,
+    });
+    const mediaErr = validateMediaSource(resolved, fieldName);
+    if (mediaErr) {
+      return { ok: false, error: mediaErr };
+    }
+    return wrap(sender(resolved));
+  } catch (err) {
+    return { ok: false, error: `${fieldName} preparation failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -867,6 +896,9 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     "like-post": ["dynamic_id"],
     "share-post": ["dynamic_id"],
 
+    // Chat History
+    "get-chat-history": ["chat_id"],
+
     // Club
     "create-club": ["name"],
     "update-club": ["club_id"],
@@ -880,14 +912,6 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
   const missing = required.filter((key) => !hasRequiredValue(params[key]));
   if (missing.length > 0) {
     return `missing required params for ${action}: ${missing.join(", ")}`;
-  }
-
-  const mediaKey = mediaByAction[action];
-  if (mediaKey) {
-    const mediaErr = validateMediaSource(params[mediaKey], mediaKey);
-    if (mediaErr) {
-      return mediaErr;
-    }
   }
 
   if (action === "set-my-skills") {
