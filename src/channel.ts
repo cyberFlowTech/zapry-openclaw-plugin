@@ -79,7 +79,7 @@ export const zapryPlugin = {
   messaging: {
     normalizeTarget: (to: string) => to.replace(/^chat:/i, "").trim(),
     targetResolver: {
-      looksLikeId: (input: string) => /^\d+$/.test(input.replace(/^chat:/i, "")),
+      looksLikeId: (input: string) => /^(g_)?\d+$/.test(input.replace(/^chat:/i, "").trim()),
       hint: "<chatId|chat:ID>",
     },
   },
