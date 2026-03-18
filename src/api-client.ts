@@ -4,6 +4,7 @@ import type {
   SetMyProfileResponse,
   FeedListResponse,
   CreatePostResponse,
+  ChatHistoryResponse,
 } from "./types.js";
 
 type SetMySoulPayload = {
@@ -200,6 +201,10 @@ export class ZapryApiClient {
 
   async getChatMemberCount(chatId: string) {
     return this.post("getChatMemberCount", { chat_id: chatId });
+  }
+
+  async getChatHistory(chatId: string, limit?: number): Promise<ZapryApiResponse<ChatHistoryResponse>> {
+    return this.post("getChatHistory", { chat_id: chatId, limit: limit ?? 50 });
   }
 
   async getChatAdministrators(chatId: string) {

@@ -139,6 +139,26 @@ export type CreatePostResponse = {
   dynamic_id: number;
 };
 
+// ── Chat History ──
+
+export type ChatHistoryMessage = {
+  message_id: string;
+  from_id: string;
+  from_name?: string;
+  is_bot: boolean;
+  chat_id: string;
+  text?: string;
+  type: string;
+  timestamp: number;
+  media_url?: string;
+};
+
+export type ChatHistoryResponse = {
+  chat_id: string;
+  count: number;
+  messages: ChatHistoryMessage[];
+};
+
 // ── Profile ──
 
 export type SetMyProfilePayload = {
