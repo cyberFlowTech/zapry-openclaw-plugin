@@ -619,17 +619,18 @@ function extractImageSource(item: unknown): string | null {
 }
 
 async function materializeCreatePostImages(
-  images: unknown,
+  rawImages: unknown,
   client?: { getFile: (fileId: string) => Promise<any> },
 ): Promise<string[] | undefined> {
-  if (!Array.isArray(images)) {
-    if (typeof images === "string" && images.trim().length > 0) {
-      images = [images];
-    } else {
-      return undefined;
-    }
+  let images: unknown[];
+  if (Array.isArray(rawImages)) {
+    images = rawImages;
+  } else if (typeof rawImages === "string" && rawImages.trim().length > 0) {
+    images = [rawImages];
+  } else {
+    return undefined;
   }
-  const resolved = await Promise.all(images.map(async (item, idx) => {
+  const resolved = await Promise.all(images.map(async (item: unknown, idx: number) => {
     let source = extractImageSource(item);
     if (!source) return null;
 

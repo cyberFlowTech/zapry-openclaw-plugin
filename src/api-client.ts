@@ -2,6 +2,8 @@ import type {
   ZapryApiResponse,
   SetMyProfilePayload,
   SetMyProfileResponse,
+  FeedListResponse,
+  CreatePostResponse,
 } from "./types.js";
 
 type SetMySoulPayload = {
@@ -272,23 +274,23 @@ export class ZapryApiClient {
 
   // ── Feed ──
 
-  async getTrendingPosts(page?: number, pageSize?: number) {
+  async getTrendingPosts(page?: number, pageSize?: number): Promise<ZapryApiResponse<FeedListResponse>> {
     return this.post("getTrendingPosts", { page, page_size: pageSize });
   }
 
-  async getLatestPosts(page?: number, pageSize?: number) {
+  async getLatestPosts(page?: number, pageSize?: number): Promise<ZapryApiResponse<FeedListResponse>> {
     return this.post("getLatestPosts", { page, page_size: pageSize });
   }
 
-  async getMyPosts(page?: number, pageSize?: number) {
+  async getMyPosts(page?: number, pageSize?: number): Promise<ZapryApiResponse<FeedListResponse>> {
     return this.post("getMyPosts", { page, page_size: pageSize });
   }
 
-  async searchPosts(keyword: string, page?: number, pageSize?: number) {
+  async searchPosts(keyword: string, page?: number, pageSize?: number): Promise<ZapryApiResponse<FeedListResponse>> {
     return this.post("searchPosts", { keyword, page, page_size: pageSize });
   }
 
-  async createPost(content: string, images?: string[]) {
+  async createPost(content: string, images?: string[]): Promise<ZapryApiResponse<CreatePostResponse>> {
     return this.post("createPost", { content, images });
   }
 

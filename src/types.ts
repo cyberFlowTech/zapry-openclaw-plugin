@@ -97,6 +97,50 @@ export type DerivedProfile = {
   overrideRevision?: number;
 };
 
+// ── Feed / Post (snake_case, 对齐 openapi-server 新响应格式) ──
+
+export type PostComment = {
+  id: number;
+  user_id: number;
+  text: string;
+  time: number;
+  nick: string;
+  avatar: string;
+  type: number;
+};
+
+export type PostInfo = {
+  id: number;
+  user_id: number;
+  desc: string;
+  text: string;
+  media: string;
+  ctime: number;
+  nick: string;
+  avatar: string;
+  praise_count: number;
+  comment_count: number;
+  share_count: number;
+  can_share: number;
+};
+
+export type FeedItem = {
+  info: PostInfo;
+  comments: PostComment[];
+};
+
+export type FeedListResponse = {
+  items: FeedItem[];
+  pages: number;
+};
+
+export type CreatePostResponse = {
+  created: boolean;
+  dynamic_id: number;
+};
+
+// ── Profile ──
+
 export type SetMyProfilePayload = {
   profileSource: ProfileSource;
 };

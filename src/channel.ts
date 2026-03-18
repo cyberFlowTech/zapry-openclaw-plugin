@@ -77,9 +77,9 @@ export const zapryPlugin = {
   },
 
   messaging: {
-    normalizeTarget: (to: string) => to.replace(/^chat:/i, "").trim(),
+    normalizeTarget: (to: string) => to.replace(/^(chat|zapry):/i, "").trim(),
     targetResolver: {
-      looksLikeId: (input: string) => /^(g_)?\d+$/.test(input.replace(/^chat:/i, "").trim()),
+      looksLikeId: (input: string) => /^(g_)?\d+$/.test(input.replace(/^(chat|zapry):/i, "").trim()),
       hint: "<chatId|chat:ID>",
     },
   },
@@ -120,7 +120,7 @@ export const zapryPlugin = {
     deliveryMode: "direct" as const,
     chunker: null,
     textChunkLimit: 4096,
-    resolveTarget: ({ to }: { to: string }) => to.replace(/^chat:/i, "").trim(),
+    resolveTarget: ({ to }: { to: string }) => to.replace(/^(chat|zapry):/i, "").trim(),
     sendText: async ({ to, text, accountId, deps, replyToId }: any) => {
       const cfg = deps?.cfg;
       const account = resolveZapryAccount(cfg, accountId);

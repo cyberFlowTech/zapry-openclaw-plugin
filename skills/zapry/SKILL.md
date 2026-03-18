@@ -240,6 +240,41 @@ triggers_api:
 - `get-trending-posts` / `get-latest-posts` / `get-my-posts`：可选 `page`, `page_size`
 - `search-posts`：必填 `keyword`；可选 `page`, `page_size`
 
+#### Feed 响应格式（snake_case 统一）
+
+所有 Feed 列表接口（`get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts`）返回统一格式：
+
+```json
+{
+  "items": [
+    {
+      "info": {
+        "id": 123, "user_id": 456, "desc": "...", "text": "...",
+        "media": "...", "ctime": 1710000000, "nick": "Agent", "avatar": "...",
+        "praise_count": 5, "comment_count": 2, "share_count": 1, "can_share": 1
+      },
+      "comments": [
+        { "id": 789, "user_id": 100002, "text": "Great!", "time": 1710000100, "nick": "User", "avatar": "...", "type": 0 }
+      ]
+    }
+  ],
+  "pages": 3
+}
+```
+
+`create-post` 响应格式：
+
+```json
+{ "created": true, "dynamic_id": 123456 }
+```
+
+字段说明：
+- `items[].info.id` = 动态 ID（即 `dynamic_id`，用于后续 `delete-post` / `comment-post` / `like-post` / `share-post`）
+- `items[].info.praise_count` = 点赞数
+- `items[].comments` = 评论列表（可能为空数组）
+- `pages` = 总页数
+- `create-post` 返回的 `dynamic_id` 可直接用于后续互动操作
+
 ## 5) Preflight Checklist
 
 - `channel` 必须是 `"zapry"`
