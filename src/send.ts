@@ -13,6 +13,14 @@ const MIME_MAP: Record<string, string> = {
   ".flac": "audio/flac",
 };
 
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp", "bmp", "heic", "heif"]);
+const ANIMATION_EXTS = new Set(["gif"]);
+const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "webm"]);
+const VOICE_EXTS = new Set(["opus", "ogg", "oga", "amr", "m4a"]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "aac", "flac", "m4b"]);
+const EXTERNAL_IMAGE_FETCH_TIMEOUT_MS = 15_000;
+const MAX_EXTERNAL_IMAGE_BYTES = 10 * 1024 * 1024;
+
 async function toDataUri(localPath: string): Promise<string> {
   const buf = await readFile(localPath);
   const ext = extname(localPath).toLowerCase();
@@ -22,6 +30,158 @@ async function toDataUri(localPath: string): Promise<string> {
 
 function isLocalPath(url: string): boolean {
   return /^(\/|~\/|\.\/|\.\.\/)/.test(url) || /^[a-zA-Z]:\\/.test(url);
+}
+
+function isHttpUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+function extractDataUriMime(source: string): string | null {
+  const match = /^data:([^;,]+)[;,]/i.exec(source.trim());
+  if (!match) {
+    return null;
+  }
+  return String(match[1]).trim().toLowerCase();
+}
+
+function mediaKindFromMime(mime: string): "animation" | "photo" | "video" | "voice" | "audio" | "document" {
+  const normalized = mime.toLowerCase();
+  if (normalized === "image/gif") {
+    return "animation";
+  }
+  if (normalized.startsWith("image/")) {
+    return "photo";
+  }
+  if (normalized.startsWith("video/")) {
+    return "video";
+  }
+  if (normalized.startsWith("audio/")) {
+    if (/(ogg|opus|amr|x-m4a|mp4)/i.test(normalized)) {
+      return "voice";
+    }
+    return "audio";
+  }
+  return "document";
+}
+
+function inferMimeFromPath(pathLike: string): string {
+  const clean = pathLike.split("?")[0]?.split("#")[0] ?? pathLike;
+  const ext = extname(clean).toLowerCase();
+  return MIME_MAP[ext] || "application/octet-stream";
+}
+
+function detectMediaKind(mediaRef: string, originalSource: string): "animation" | "photo" | "video" | "voice" | "audio" | "document" {
+  const dataUriMime = extractDataUriMime(mediaRef);
+  if (dataUriMime) {
+    return mediaKindFromMime(dataUriMime);
+  }
+
+  const clean = (originalSource || mediaRef).split("?")[0]?.split("#")[0] ?? (originalSource || mediaRef);
+  const ext = clean.split(".").pop()?.toLowerCase() ?? "";
+  if (ANIMATION_EXTS.has(ext)) {
+    return "animation";
+  }
+  if (IMAGE_EXTS.has(ext)) {
+    return "photo";
+  }
+  if (VIDEO_EXTS.has(ext)) {
+    return "video";
+  }
+  if (VOICE_EXTS.has(ext)) {
+    return "voice";
+  }
+  if (AUDIO_EXTS.has(ext)) {
+    return "audio";
+  }
+  return "document";
+}
+
+function normalizeContentType(contentType: string | null): string {
+  return String(contentType ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+}
+
+function isGifBinary(binary: Buffer): boolean {
+  if (binary.length < 6) {
+    return false;
+  }
+  const header = binary.subarray(0, 6).toString("ascii");
+  return header === "GIF87a" || header === "GIF89a";
+}
+
+async function readResponseBodyWithSizeLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  const contentLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`file is too large (${contentLength} bytes), max ${maxBytes} bytes`);
+  }
+  if (!response.body) {
+    throw new Error("empty response body");
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!value || value.byteLength === 0) {
+      continue;
+    }
+    total += value.byteLength;
+    if (total > maxBytes) {
+      throw new Error(`file is too large (${total} bytes), max ${maxBytes} bytes`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const maybeError = err as { name?: string; code?: string };
+  return maybeError.name === "AbortError" || maybeError.code === "ABORT_ERR";
+}
+
+async function downloadGifAsDataUri(source: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EXTERNAL_IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(source, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const declaredMime = normalizeContentType(response.headers.get("content-type"));
+    const binary = await readResponseBodyWithSizeLimit(response, MAX_EXTERNAL_IMAGE_BYTES);
+    const inferredMime = inferMimeFromPath(source);
+    const mime = declaredMime || inferredMime;
+    if (mime !== "image/gif" && !isGifBinary(binary)) {
+      throw new Error(
+        `sendAnimation requires GIF source, but got ${JSON.stringify(mime || "unknown")} (tip: use the direct .gif URL)`,
+      );
+    }
+    return `data:image/gif;base64,${binary.toString("base64")}`;
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error(`animation download timed out after ${EXTERNAL_IMAGE_FETCH_TIMEOUT_MS}ms`);
+    }
+    if (err instanceof Error) {
+      throw new Error(`animation download failed: ${err.message}`);
+    }
+    throw new Error("animation download failed");
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function sendMessageZapry(
@@ -38,33 +198,40 @@ export async function sendMessageZapry(
   const chatId = normalizeTarget(to);
 
   if (opts?.mediaUrl) {
-    let mediaRef = opts.mediaUrl;
+    const originalMediaUrl = opts.mediaUrl.trim();
+    let mediaRef = originalMediaUrl;
     if (isLocalPath(mediaRef)) {
       const resolved = mediaRef.replace(/^~/, process.env.HOME || "");
       mediaRef = await toDataUri(resolved);
     }
 
-    const cleanUrl = opts.mediaUrl.split("?")[0].split("#")[0] ?? opts.mediaUrl;
-    const ext = cleanUrl.split(".").pop()?.toLowerCase() ?? "";
-    const imageExts = ["jpg", "jpeg", "png", "webp", "bmp", "heic", "heif"];
-    const animationExts = ["gif"];
-    const videoExts = ["mp4", "mov", "avi", "webm"];
-    const voiceExts = ["opus", "ogg", "oga", "amr", "m4a"];
-    const audioExts = ["mp3", "wav", "aac", "flac", "m4b"];
+    const initialKind = detectMediaKind(mediaRef, originalMediaUrl);
+    if (initialKind === "animation" && isHttpUrl(mediaRef)) {
+      mediaRef = await downloadGifAsDataUri(mediaRef);
+    }
+
+    const mediaKind = detectMediaKind(mediaRef, originalMediaUrl);
 
     let resp;
-    if (animationExts.includes(ext)) {
-      resp = await client.sendAnimation(chatId, mediaRef);
-    } else if (imageExts.includes(ext)) {
-      resp = await client.sendPhoto(chatId, mediaRef);
-    } else if (videoExts.includes(ext)) {
-      resp = await client.sendVideo(chatId, mediaRef);
-    } else if (voiceExts.includes(ext)) {
-      resp = await client.sendVoice(chatId, mediaRef);
-    } else if (audioExts.includes(ext)) {
-      resp = await client.sendAudio(chatId, mediaRef);
-    } else {
-      resp = await client.sendDocument(chatId, mediaRef);
+    switch (mediaKind) {
+      case "animation":
+        resp = await client.sendAnimation(chatId, mediaRef);
+        break;
+      case "photo":
+        resp = await client.sendPhoto(chatId, mediaRef);
+        break;
+      case "video":
+        resp = await client.sendVideo(chatId, mediaRef);
+        break;
+      case "voice":
+        resp = await client.sendVoice(chatId, mediaRef);
+        break;
+      case "audio":
+        resp = await client.sendAudio(chatId, mediaRef);
+        break;
+      default:
+        resp = await client.sendDocument(chatId, mediaRef);
+        break;
     }
 
     if (!resp.ok) {
