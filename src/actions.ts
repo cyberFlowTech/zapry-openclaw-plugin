@@ -51,6 +51,7 @@ const ACTION_ALIASES: Record<string, string> = {
   getchatadmins: "get-chat-administrators",
   mutechatmember: "mute-chat-member",
   kickchatmember: "kick-chat-member",
+  invitechatmember: "invite-chat-member",
   setchattitle: "set-chat-title",
   setchatdescription: "set-chat-description",
 
@@ -146,13 +147,34 @@ const MAX_GENERATED_AUDIO_DURATION_SECONDS = 30;
 const DEFAULT_GENERATE_AUDIO_FALLBACK_TEXT =
   "抱歉，我刚刚生成音频失败了。请换个描述重试，或让我先发文字版本。";
 const MAX_EXTERNAL_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_EXTERNAL_MEDIA_BYTES = 50 * 1024 * 1024;
 const EXTERNAL_IMAGE_FETCH_TIMEOUT_MS = 15_000;
+const EXTERNAL_MEDIA_FETCH_TIMEOUT_MS = 60_000;
+
+type MediaFieldName = "photo" | "video" | "document" | "audio" | "voice" | "animation";
+
+const MEDIA_FIELD_TO_ENDPOINT: Record<MediaFieldName, string> = {
+  photo: "sendPhoto",
+  video: "sendVideo",
+  audio: "sendAudio",
+  document: "sendDocument",
+  voice: "sendVoice",
+  animation: "sendAnimation",
+};
 
 export async function handleZapryAction(ctx: ActionContext): Promise<ActionResult> {
   const { action, account, params } = ctx;
   const normalizedAction = resolveActionForRuntime(action, params);
   const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
   const normalized = normalizeActionParams(normalizedAction, params);
+
+  if (isNonEmptyString(normalized.chat_id) && !isStandardChatId(normalized.chat_id)) {
+    const resolved = await resolveChatIdByName(client, normalized.chat_id);
+    if (resolved) {
+      normalized.chat_id = resolved;
+    }
+  }
+
   const requiredError = validateRequiredParams(normalizedAction, normalized);
   if (requiredError) {
     return { ok: false, error: requiredError };
@@ -170,18 +192,38 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
           replyMarkup: normalized.reply_markup,
         }),
       );
-    case "send-photo":
-      return sendMediaWithAutoDownload(normalized.photo, "photo", (m) => client.sendPhoto(normalized.chat_id, m));
+    case "send-photo": {
+      const photoSource = normalized.photo || normalized.media;
+      if (!photoSource && isNonEmptyString(normalized.prompt)) {
+        return generateAndSendPhoto(client, normalized.chat_id, normalized.prompt);
+      }
+      if (!photoSource) {
+        return { ok: false, error: "missing required params: photo or prompt (provide an image source or a text prompt to auto-generate)" };
+      }
+      return sendMediaWithAutoDownload(photoSource, "photo", (m) => client.sendPhoto(normalized.chat_id, m), {
+        client, chatId: normalized.chat_id, fieldName: "photo",
+      });
+    }
     case "send-video":
-      return sendMediaWithAutoDownload(normalized.video, "video", (m) => client.sendVideo(normalized.chat_id, m));
+      return sendMediaWithAutoDownload(normalized.video, "video", (m) => client.sendVideo(normalized.chat_id, m), {
+        client, chatId: normalized.chat_id, fieldName: "video",
+      });
     case "send-document":
-      return sendMediaWithAutoDownload(normalized.document, "document", (m) => client.sendDocument(normalized.chat_id, m));
+      return sendMediaWithAutoDownload(normalized.document, "document", (m) => client.sendDocument(normalized.chat_id, m), {
+        client, chatId: normalized.chat_id, fieldName: "document",
+      });
     case "send-audio":
-      return sendMediaWithAutoDownload(normalized.audio, "audio", (m) => client.sendAudio(normalized.chat_id, m));
+      return sendMediaWithAutoDownload(normalized.audio, "audio", (m) => client.sendAudio(normalized.chat_id, m), {
+        client, chatId: normalized.chat_id, fieldName: "audio",
+      });
     case "send-voice":
-      return sendMediaWithAutoDownload(normalized.voice, "voice", (m) => client.sendVoice(normalized.chat_id, m));
+      return sendMediaWithAutoDownload(normalized.voice, "voice", (m) => client.sendVoice(normalized.chat_id, m), {
+        client, chatId: normalized.chat_id, fieldName: "voice",
+      });
     case "send-animation":
-      return sendMediaWithAutoDownload(normalized.animation, "animation", (m) => client.sendAnimation(normalized.chat_id, m));
+      return sendMediaWithAutoDownload(normalized.animation, "animation", (m) => client.sendAnimation(normalized.chat_id, m), {
+        client, chatId: normalized.chat_id, fieldName: "animation",
+      });
     case "generate-audio":
       return handleGenerateAudioAction(client, normalized);
     case "send-chat-action":
@@ -260,6 +302,8 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.muteChatMember(normalized.chat_id, normalized.user_id, normalized.mute));
     case "kick-chat-member":
       return wrap(client.kickChatMember(normalized.chat_id, normalized.user_id));
+    case "invite-chat-member":
+      return wrap(client.inviteChatMember(normalized.chat_id, normalized.user_id));
     case "set-chat-title":
       return wrap(client.setChatTitle(normalized.chat_id, normalized.title));
     case "set-chat-description":
@@ -346,16 +390,178 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
   }
 }
 
+async function generateAndSendPhoto(
+  client: ZapryApiClient,
+  chatId: string,
+  prompt: string,
+): Promise<ActionResult> {
+  if (!chatId) return { ok: false, error: "missing required params: chat_id" };
+
+  const genScriptDir = resolvePath(
+    "/opt/homebrew/lib/node_modules/openclaw/skills/openai-image-gen/scripts",
+  );
+  const outDir = await mkdtemp(joinPath(os.tmpdir(), "zapry-img-"));
+
+  try {
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const proc = spawn(
+        "python3",
+        [
+          joinPath(genScriptDir, "gen.py"),
+          "--prompt", prompt,
+          "--count", "1",
+          "--model", "gpt-image-1",
+          "--quality", "low",
+          "--size", "1024x1024",
+          "--output-format", "jpeg",
+          "--out-dir", outDir,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 },
+      );
+
+      proc.on("close", (code) => resolve(code ?? 1));
+      proc.on("error", reject);
+    });
+
+    if (exitCode !== 0) {
+      return { ok: false, error: `image generation failed (exit ${exitCode})` };
+    }
+
+    const { readdir } = await import("node:fs/promises");
+    const files = await readdir(outDir);
+    const imageFile = files.find((f) => /\.(png|jpe?g|webp)$/i.test(f));
+    if (!imageFile) {
+      return { ok: false, error: "image generation produced no output file" };
+    }
+
+    const imagePath = joinPath(outDir, imageFile);
+    const imageBytes = await readFile(imagePath);
+    return sendMediaMultipart(client, chatId, imageBytes, imageFile, "photo");
+  } catch (err) {
+    return { ok: false, error: `image generation error: ${err instanceof Error ? err.message : String(err)}` };
+  } finally {
+    rm(outDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function sendMediaMultipart(
+  client: ZapryApiClient,
+  chatId: string,
+  mediaBytes: Buffer,
+  fileName: string,
+  fieldName: MediaFieldName,
+): Promise<ActionResult> {
+  const mime = inferMimeTypeFromPath(fileName) || "application/octet-stream";
+  const safeFileName = fileName.replace(/\.jfif$/i, ".jpeg");
+
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append(fieldName, new Blob([new Uint8Array(mediaBytes) as BlobPart], { type: mime }), safeFileName);
+
+  const baseUrl = (client as any).baseUrl ?? "";
+  const token = (client as any).botToken ?? "";
+  const endpoint = MEDIA_FIELD_TO_ENDPOINT[fieldName] ?? `send${fieldName.charAt(0).toUpperCase()}${fieldName.slice(1)}`;
+  const url = `${baseUrl}/${token}/${endpoint}`;
+  try {
+    const resp = await fetch(url, { method: "POST", body: form });
+    if (!resp.ok) {
+      let errBody = "";
+      try { errBody = await resp.text(); } catch {}
+      const errJson = (() => { try { return JSON.parse(errBody); } catch { return null; } })();
+      return { ok: false, error: `HTTP ${resp.status} ${resp.statusText} — ${errJson?.description ?? errBody.slice(0, 200)}` };
+    }
+    const data = await resp.json();
+    return data as ActionResult;
+  } catch (err) {
+    return { ok: false, error: `multipart upload failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+async function downloadExternalMediaToBuffer(
+  source: string,
+  label: string,
+): Promise<{ buffer: Buffer; mime: string; fileName: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EXTERNAL_MEDIA_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(source, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const contentType = normalizeContentType(response.headers.get("content-type"));
+    const fallbackMime = inferMimeTypeFromPath(source);
+    const mime = contentType || fallbackMime || "application/octet-stream";
+    const binary = await readResponseBodyWithSizeLimit(response, MAX_EXTERNAL_MEDIA_BYTES);
+    const urlPath = source.split("?")[0].split("#")[0];
+    const urlFileName = urlPath.split("/").pop() ?? "";
+    const ext = urlFileName.includes(".") ? urlFileName.split(".").pop()! : inferExtFromMime(mime);
+    const fileName = urlFileName.includes(".") ? urlFileName : `media.${ext}`;
+    return { buffer: binary, mime, fileName };
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error(`${label} download timed out after ${EXTERNAL_MEDIA_FETCH_TIMEOUT_MS}ms`);
+    }
+    if (err instanceof Error) {
+      throw new Error(`${label} download failed: ${err.message}`);
+    }
+    throw new Error(`${label} download failed`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function inferExtFromMime(mime: string): string {
+  const map: Record<string, string> = {
+    "image/jpeg": "jpeg", "image/png": "png", "image/gif": "gif", "image/webp": "webp",
+    "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+    "audio/mpeg": "mp3", "audio/ogg": "ogg", "audio/wav": "wav", "audio/aac": "aac",
+    "application/pdf": "pdf", "text/plain": "txt",
+  };
+  return map[mime.toLowerCase()] ?? "bin";
+}
+
 async function sendMediaWithAutoDownload(
   rawSource: string,
   fieldName: string,
   sender: (resolvedSource: string) => Promise<any>,
+  multipartCtx?: { client: ZapryApiClient; chatId: string; fieldName: MediaFieldName },
 ): Promise<ActionResult> {
   if (!isNonEmptyString(rawSource)) {
     return { ok: false, error: `missing required params: ${fieldName}` };
   }
+  const trimmed = rawSource.trim();
+  const isExternalUrl = /^https?:\/\//i.test(trimmed);
+  const isDataUri = /^data:[^,]+,.+/i.test(trimmed);
+  const isTempMedia = trimmed.startsWith("/_temp/media/") || /^https?:\/\/[^/\s]+\/_temp\/media\//i.test(trimmed);
+
+  if (multipartCtx && isExternalUrl && !isTempMedia) {
+    try {
+      const { buffer, fileName } = await downloadExternalMediaToBuffer(trimmed, fieldName);
+      return sendMediaMultipart(multipartCtx.client, multipartCtx.chatId, buffer, fileName, multipartCtx.fieldName);
+    } catch (err) {
+      return { ok: false, error: `${fieldName} download failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  if (multipartCtx && !isDataUri && !isTempMedia && !isExternalUrl) {
+    const localPath = toLocalMediaPath(trimmed);
+    if (localPath) {
+      try {
+        const buffer = await readFile(localPath);
+        const fileName = localPath.split("/").pop() ?? `file.${fieldName}`;
+        return sendMediaMultipart(multipartCtx.client, multipartCtx.chatId, buffer, fileName, multipartCtx.fieldName);
+      } catch (err) {
+        return { ok: false, error: `${fieldName} read failed: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
+  }
+
   try {
-    const resolved = await materializeSendMediaSource(rawSource.trim(), {
+    const resolved = await materializeSendMediaSource(trimmed, {
       allowExternalHttpImages: true,
       sourceLabel: fieldName,
     });
@@ -850,7 +1056,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
   const requiredByAction: Record<string, string[]> = {
     // Messaging
     "send-message": ["chat_id", "text"],
-    "send-photo": ["chat_id", "photo"],
+    "send-photo": ["chat_id"],
     "send-video": ["chat_id", "video"],
     "send-document": ["chat_id", "document"],
     "send-audio": ["chat_id", "audio"],
@@ -875,6 +1081,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     "get-chat-administrators": ["chat_id"],
     "mute-chat-member": ["chat_id", "user_id", "mute"],
     "kick-chat-member": ["chat_id", "user_id"],
+    "invite-chat-member": ["chat_id", "user_id"],
     "set-chat-title": ["chat_id", "title"],
     "set-chat-description": ["chat_id", "description"],
 
@@ -1016,7 +1223,7 @@ function hasMeaningfulValue(value: unknown): boolean {
 function normalizeActionParams(action: string, raw: Record<string, any>): Record<string, any> {
   const params = { ...(raw ?? {}) };
 
-  const chatId = pickFirst(params, ["chat_id", "chatId", "chat", "to"]);
+  const chatId = pickFirst(params, ["chat_id", "chatId", "chat", "to", "target", "group", "groupId", "group_id"]);
   const userId = pickFirst(params, [
     "user_id",
     "userId",
@@ -1981,6 +2188,37 @@ async function sendGenerateAudioFallback(
   } catch {
     // best effort only
   }
+}
+
+function isStandardChatId(chatId: string): boolean {
+  return /^[gup]_\d+$/.test(chatId.trim());
+}
+
+async function resolveChatIdByName(client: ZapryApiClient, nameOrId: string): Promise<string | null> {
+  const name = nameOrId.trim();
+  try {
+    const resp = await client.getMyGroups(1, 100);
+    if (!resp.ok) return null;
+    const raw = (resp as any).result;
+    const groups: any[] = Array.isArray(raw) ? raw : raw?.items ?? raw?.groups ?? [];
+
+    const extractNameAndId = (g: any): [string, string] => {
+      const info = g.info ?? g;
+      const gName = info.group_name ?? info.name ?? info.title ?? "";
+      const gId = info.chat_id ?? info.group_id ?? info.chatId ?? info.id ?? "";
+      return [String(gName), String(gId)];
+    };
+
+    for (const g of groups) {
+      const [gName, gId] = extractNameAndId(g);
+      if (gName === name && isNonEmptyString(gId)) return gId;
+    }
+    for (const g of groups) {
+      const [gName, gId] = extractNameAndId(g);
+      if (gName.includes(name) && isNonEmptyString(gId)) return gId;
+    }
+  } catch {}
+  return null;
 }
 
 async function wrap(promise: Promise<any>): Promise<ActionResult> {

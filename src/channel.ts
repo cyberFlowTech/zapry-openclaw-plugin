@@ -8,7 +8,37 @@ import { monitorZapryProvider } from "./monitor.js";
 import { handleZapryAction } from "./actions.js";
 import { ZapryApiClient } from "./api-client.js";
 import { DEFAULT_ACCOUNT_ID } from "./types.js";
+import type { ResolvedZapryAccount } from "./types.js";
 import { syncProfileToZapry } from "./profile-sync.js";
+
+const IS_STANDARD_CHAT_ID = /^[gup]_\d+$/;
+
+async function resolveOutboundTarget(account: ResolvedZapryAccount, to: string): Promise<string> {
+  const trimmed = to.trim();
+  if (IS_STANDARD_CHAT_ID.test(trimmed) || trimmed.startsWith("chat:") || /^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+    const resp = await client.getMyGroups(1, 100);
+    if (!resp.ok) return trimmed;
+    const raw = (resp as any).result;
+    const groups: any[] = Array.isArray(raw) ? raw : raw?.items ?? raw?.groups ?? [];
+    for (const g of groups) {
+      const info = g.info ?? g;
+      const gName = info.group_name ?? info.name ?? info.title ?? "";
+      const gId = info.chat_id ?? info.group_id ?? info.id ?? "";
+      if (String(gName) === trimmed && gId) return String(gId);
+    }
+    for (const g of groups) {
+      const info = g.info ?? g;
+      const gName = String(info.group_name ?? info.name ?? info.title ?? "");
+      const gId = info.chat_id ?? info.group_id ?? info.id ?? "";
+      if (gName.includes(trimmed) && gId) return String(gId);
+    }
+  } catch {}
+  return trimmed;
+}
 
 export const zapryPlugin = {
   id: "zapry",
@@ -86,11 +116,11 @@ export const zapryPlugin = {
 
   agentPrompt: {
     messageToolHints: () => [
-      `For Zapry, use "message" tool for sending text chat messages (action "send"). ` +
-      `For sending photos/videos/audio/documents to any chat (group or DM), use "zapry_action" with ` +
-      `action "send-photo"/"send-video"/"send-audio"/"send-document"/"send-voice"/"send-animation". ` +
-      `External image URLs are auto-downloaded — just pass the URL as the media field. ` +
-      `For all other non-messaging operations (profile, groups, feed queries, etc.), use "zapry_action". ` +
+      `For ALL Zapry operations, prefer "zapry_action" tool. ` +
+      `To send text messages: use "zapry_action" action="send-message" with chat_id and text — supports group names (auto-resolved). ` +
+      `To send photos: use "zapry_action" action="send-photo" with "prompt" parameter to auto-generate images (e.g. prompt="cute cat"). ` +
+      `To send video/audio/document: use "zapry_action" with send-video/send-audio/send-document. ` +
+      `IMPORTANT: Do NOT use "message" tool for Zapry group chats — it cannot resolve group names. Always use zapry_action instead. ` +
       `To publish to feed (广场), use "zapry_post" with content and optional images.`,
     ],
   },
@@ -133,13 +163,15 @@ export const zapryPlugin = {
     sendText: async ({ to, text, accountId, deps, replyToId }: any) => {
       const cfg = deps?.cfg;
       const account = resolveZapryAccount(cfg, accountId);
-      const result = await sendMessageZapry(account, to, text, { replyTo: replyToId });
+      const resolvedTo = await resolveOutboundTarget(account, to);
+      const result = await sendMessageZapry(account, resolvedTo, text, { replyTo: replyToId });
       return { channel: "zapry", ...result };
     },
     sendMedia: async ({ to, text, mediaUrl, accountId, deps, replyToId }: any) => {
       const cfg = deps?.cfg;
       const account = resolveZapryAccount(cfg, accountId);
-      const result = await sendMessageZapry(account, to, text || "", { mediaUrl, replyTo: replyToId });
+      const resolvedTo = await resolveOutboundTarget(account, to);
+      const result = await sendMessageZapry(account, resolvedTo, text || "", { mediaUrl, replyTo: replyToId });
       return { channel: "zapry", ...result };
     },
   },

@@ -40,10 +40,14 @@ export class ZapryApiClient {
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
     if (!resp.ok) {
+      let errorBody = "";
+      try { errorBody = await resp.text(); } catch {}
+      const errorJson = (() => { try { return JSON.parse(errorBody); } catch { return null; } })();
+      const desc = errorJson?.description ?? errorBody.slice(0, 200) ?? resp.statusText;
       return {
         ok: false,
         error_code: resp.status,
-        description: `HTTP ${resp.status} ${resp.statusText}`,
+        description: `HTTP ${resp.status} ${resp.statusText}${desc ? ` — ${desc}` : ""}`,
       };
     }
     return (await resp.json()) as ZapryApiResponse<T>;
@@ -217,6 +221,10 @@ export class ZapryApiClient {
 
   async kickChatMember(chatId: string, userId: string) {
     return this.post("kickChatMember", { chat_id: chatId, user_id: userId });
+  }
+
+  async inviteChatMember(chatId: string, userId: string) {
+    return this.post("inviteChatMember", { chat_id: chatId, user_id: userId });
   }
 
   async setChatTitle(chatId: string, title: string) {

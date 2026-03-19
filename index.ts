@@ -39,6 +39,7 @@ import { resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
 
 const ZAPRY_ACTION_TOOL_ACTIONS = [
+  "send", "send-message",
   "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation",
   "generate-audio",
   "delete-message", "answer-callback-query",
@@ -130,8 +131,8 @@ const plugin = {
       label: "Zapry Platform Action",
       description:
         "Execute a Zapry platform action. Use this for: " +
-        "sending media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups — " +
-        "external image URLs are auto-downloaded, just pass the URL; " +
+        "sending media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
+        "IMPORTANT: For send-photo, if user asks for an image without providing one, use 'prompt' parameter (e.g. action='send-photo', prompt='bitcoin logo') — image is auto-generated, NO photo/URL needed. " +
         "profile queries (get-my-profile, get-me), friend operations " +
         "(get-my-friend-requests, accept-friend-request, add-friend, etc.), " +
         "group management (get-chat-members, mute-chat-member, kick-chat-member, etc.), " +
@@ -171,7 +172,11 @@ const plugin = {
           },
           photo: {
             type: "string" as const,
-            description: "Photo source: external URL (auto-downloaded), data URI, local path, or /_temp/media URL (for send-photo)",
+            description: "Photo source: external URL (auto-downloaded), data URI, local path, or /_temp/media URL (for send-photo). If omitted but 'prompt' is provided, image will be auto-generated.",
+          },
+          prompt: {
+            type: "string" as const,
+            description: "PREFERRED for send-photo when user asks for an image: describe what to generate (e.g. 'bitcoin logo', 'cute cat'). Image is auto-generated and sent — no photo/URL needed.",
           },
           video: {
             type: "string" as const,
@@ -215,7 +220,7 @@ const plugin = {
       },
       execute: async (_toolCallId: string, args: Record<string, any>) => {
         try {
-          const { action, target: _t, channel: _ch, accountId: reqAccountId, ...params } = args ?? {};
+          const { action, channel: _ch, accountId: reqAccountId, ...params } = args ?? {};
           const cfg = await resolveRuntimeConfig(api);
           const account = resolveZapryAccount(cfg, reqAccountId);
           const result = await handleZapryAction({

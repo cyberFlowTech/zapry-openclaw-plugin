@@ -33,19 +33,41 @@ triggers_api:
 
 执行 Zapry 动作时按以下路由：
 
-- `message`: 仅用于纯文字消息发送，固定 `action: "send"`，并传 `channel: "zapry"` + `target` + `text`
-- `zapry_action`: **发送图片/视频/音频/文件** 以及所有非消息操作（身份、联系人、群、技能、feed 查询/互动、webhook、聊天记录 等）
+- `message`: **仅当你已知精确的 `chat_id`（如 `g_123456`）时**，可用于纯文字消息发送，传 `channel: "zapry"` + `target: "chat:g_xxx"` + `text`
+- `zapry_action`: **推荐用于所有 Zapry 操作**，包括发文字（`send-message`）、图片、视频、音频、文件、文档。**支持群名自动解析**——直接传群名即可，无需手动查 ID。发送文件用 `action: "send-document"`
 - `zapry_post`: 发广场动态（create-post），传 `content`，可选 `images`
-- `pdf`: 仅用于 PDF 分析
+- `pdf`: 创建 / 分析 PDF 文件。创建后用 `zapry_action send-document` 发送到聊天
 
 ## 路由规则（必须遵守）
 
-- **发送图片/视频/文件/语音到群聊或私聊**：必须用 `zapry_action`，action 为 `send-photo` / `send-video` / `send-document` / `send-audio` / `send-voice` / `send-animation`
+- **发送任何内容（文字/图片/视频/文件/语音）到群聊或私聊**：**一律用 `zapry_action`**
+  - 发文字用 `action: "send-message"`（支持群名自动解析）
+  - 发图片用 `action: "send-photo"`
+  - 发视频/文件/音频分别用对应 action
+- **禁止用 `message` 工具向群聊发文字**——`message` 工具不支持群名自动解析，会导致发送失败
 - **外部图片 URL 可以直接使用**：插件会自动下载并转换为 data URI，无需手动转换
 - 禁止用 `message` 工具调用 `create-post`、`get-my-profile`、`get-my-friend-requests` 等非消息 action
 - 发广场动态必须走 `zapry_post`
 - 非消息查询/管理必须走 `zapry_action`
 - 查询聊天记录用 `zapry_action`，action 为 `get-chat-history`
+
+## 图片生成与发送（必须遵守，最高优先级）
+
+当用户要求发送图片但没有提供具体图片时（例如"发一张比特币的图片"、"给我发个猫猫图"），**直接用 `zapry_action` 的 `send-photo` + `prompt` 参数，一步完成**：
+
+```json
+{ "action": "send-photo", "chat_id": "g_xxx", "prompt": "bitcoin themed illustration" }
+```
+
+**不需要** photo 字段 — 插件会自动根据 prompt 生成图片并发送。这是**最可靠的方式**。
+
+### 规则
+
+- 用户要图片但没给具体图 → 用 `send-photo` + `prompt`，**不要**尝试搜索外部 URL
+- 用户给了图片 URL 或本地路径 → 用 `send-photo` + `photo`
+- **禁止**回复"没有图片"、"无法发送"、"你自己发" — 你能生成任何图片
+- **禁止**混淆 `generate-audio`（音频生成）和 `send-photo` + `prompt`（图片生成）
+- 广场配图：先用 `send-photo` + `prompt` 生成并获取路径（或直接描述需求），也可用 `openai-image-gen` 技能
 
 ## 1) 严格模式
 
@@ -103,14 +125,28 @@ triggers_api:
 - `data:` base64 URI
 - `/_temp/media/...`
 - `https://<host>/_temp/media/...`
-- **外部 HTTP(S) 图片 URL**（插件会自动下载并转换为 `data:` URI，单张最大 10MB）
+- **外部 HTTP(S) URL**（图片/视频/音频/文档均支持，插件会自动下载并通过 multipart 上传，图片最大 10MB，视频/音频/文档最大 50MB）
 - 本地文件路径（如 `/tmp/a.jpg`、`./a.png`、`file:///tmp/a.jpg`）
 
-**重要**：你可以直接传入互联网图片 URL（如 `https://example.com/image.png`），插件会自动处理下载和格式转换，无需手动操作。
+**重要**：你可以直接传入互联网媒体 URL（如 `https://example.com/video.mp4`），插件会自动处理下载和上传，无需手动操作。
 
 补充：
 - `create-post` 的 `images` 还额外支持 Zapry file_id（如 `mf_*`，自动解析为下载 URL）。
-- 若本地路径不可读、外链下载失败、文件超限、或内容类型不是 `image/*`，会在插件侧直接报错并拒绝该媒体。
+- 若本地路径不可读、外链下载失败、文件超限，会在插件侧直接报错并拒绝该媒体。
+
+## 3.0) 文档制作与发送（必须遵守）
+
+当用户要求制作文档（PDF/Word/PPT/Excel）并发送时：
+
+1. 用相应工具创建文件：`pdf` 工具创建 PDF，或用 `docx`/`pptx`/`xlsx` 技能
+2. 获取生成的文件路径
+3. 用 `zapry_action send-document` 将文件发到指定聊天
+
+```json
+{ "action": "send-document", "chat_id": "g_xxx", "document": "/tmp/report.pdf" }
+```
+
+**禁止**回复"我无法生成文件"— 你拥有 pdf/docx/pptx/xlsx 工具，能创建各类文档。
 
 ## 3.1) 入站媒体自动处理（必须遵守）
 
@@ -165,7 +201,7 @@ triggers_api:
 ### Messaging
 
 - `send-message`：`chat_id`, `text`；可选 `reply_markup`, `reply_to_message_id`, `message_thread_id`
-- `send-photo`：`chat_id`, `photo`
+- `send-photo`：`chat_id`；可选 `photo`（图片源）或 `prompt`（文字描述，自动生成图片）
 - `send-video`：`chat_id`, `video`
 - `send-document`：`chat_id`, `document`
 - `send-audio`：`chat_id`, `audio`
