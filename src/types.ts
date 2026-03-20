@@ -12,6 +12,9 @@ export type ZapryAccountConfig = {
     policy?: string;
     allowFrom?: string[];
   };
+  profileSync?: {
+    enabled?: boolean;
+  };
 };
 
 export type ZapryChannelConfig = {

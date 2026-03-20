@@ -121,6 +121,7 @@ Audio generation helper:
 | `apiBaseUrl` | string | `https://openapi-dev.mimo.immo` | Zapry API server URL |
 | `mode` | `"polling"` \| `"webhook"` | `"polling"` | Inbound message mode |
 | `webhookUrl` | string | — | Callback URL (required when mode is webhook) |
+| `profileSync.enabled` | boolean | `true` | Whether to auto-sync SOUL+skills to Zapry on startup (`setMyProfile`) |
 
 ## License
 

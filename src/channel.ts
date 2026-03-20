@@ -13,6 +13,16 @@ import { syncProfileToZapry } from "./profile-sync.js";
 
 const IS_STANDARD_CHAT_ID = /^[gup]_\d+$/;
 
+function isProfileSyncEnabled(ctx: any, accountId: string): boolean {
+  const zapryCfg = ctx?.cfg?.channels?.zapry;
+  const globalEnabled = zapryCfg?.profileSync?.enabled;
+  const accountEnabled = zapryCfg?.accounts?.[accountId]?.profileSync?.enabled;
+
+  if (typeof accountEnabled === "boolean") return accountEnabled;
+  if (typeof globalEnabled === "boolean") return globalEnabled;
+  return true;
+}
+
 async function resolveOutboundTarget(account: ResolvedZapryAccount, to: string): Promise<string> {
   const trimmed = to.trim();
   if (IS_STANDARD_CHAT_ID.test(trimmed) || trimmed.startsWith("chat:") || /^\d+$/.test(trimmed)) {
@@ -244,13 +254,18 @@ export const zapryPlugin = {
       client.setMyPresence(true).catch(() => {});
       ctx.log?.info(`[${account.accountId}] presence set to online`);
 
-      const projectRoot =
-        ctx.runtime?.projectRoot ?? ctx.runtime?.config?.projectRoot ?? process.cwd();
-      syncProfileToZapry(account, { projectRoot, log: ctx.log }).catch((err) => {
-        ctx.log?.warn?.(
-          `[${account.accountId}] profile sync failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+      const profileSyncEnabled = isProfileSyncEnabled(ctx, account.accountId);
+      if (profileSyncEnabled) {
+        const projectRoot =
+          ctx.runtime?.projectRoot ?? ctx.runtime?.config?.projectRoot ?? process.cwd();
+        syncProfileToZapry(account, { projectRoot, log: ctx.log }).catch((err) => {
+          ctx.log?.warn?.(
+            `[${account.accountId}] profile sync failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      } else {
+        ctx.log?.info?.(`[${account.accountId}] profile sync disabled by config`);
+      }
 
       ctx.abortSignal?.addEventListener("abort", () => {
         client.setMyPresence(false).catch(() => {});
