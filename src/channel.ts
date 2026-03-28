@@ -5,7 +5,6 @@ import {
 } from "./config.js";
 import { sendMessageZapry } from "./send.js";
 import { monitorZapryProvider } from "./monitor.js";
-import { handleZapryAction } from "./actions.js";
 import { ZapryApiClient } from "./api-client.js";
 import { DEFAULT_ACCOUNT_ID } from "./types.js";
 import type { ResolvedZapryAccount } from "./types.js";
@@ -144,15 +143,6 @@ export const zapryPlugin = {
       }
       return null;
     },
-    handleAction: async (ctx: any) => {
-      const account = resolveZapryAccount(ctx.cfg, ctx.accountId);
-      return handleZapryAction({
-        action: ctx.action,
-        channel: "zapry",
-        account,
-        params: ctx.params ?? {},
-      });
-    },
   },
 
   outbound: {
@@ -266,8 +256,6 @@ export const zapryPlugin = {
         cfg: ctx.cfg,
         runtime: effectiveRuntime,
         abortSignal: ctx.abortSignal,
-        onUpdate: ctx.onUpdate,
-        onMessage: ctx.onMessage,
         statusSink: (patch) => {
           if (typeof ctx.setStatus === "function") {
             ctx.setStatus({ accountId: ctx.accountId, ...patch });

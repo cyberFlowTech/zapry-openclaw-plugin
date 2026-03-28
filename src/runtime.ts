@@ -34,3 +34,33 @@ export function runWithZaprySkillInvocationContext<T>(
 export function getZaprySkillInvocationContext(): ZaprySkillInvocationContext | null {
   return _skillInvocationContext.getStore() ?? null;
 }
+
+export function buildZaprySkillRequestHeaders(input: {
+  senderId?: string;
+  messageSid?: string;
+}): Record<string, string> {
+  const senderId = String(input.senderId ?? "").trim();
+  if (!senderId) {
+    throw new Error("Zapry skill invocation requires trusted inbound sender context");
+  }
+
+  const headers: Record<string, string> = {
+    "X-Zapry-Invocation-Source": "skill",
+    "X-Zapry-Request-Sender-Id": senderId,
+  };
+
+  const messageSid = String(input.messageSid ?? "").trim();
+  if (messageSid) {
+    headers["X-Zapry-Message-Sid"] = messageSid;
+  }
+
+  return headers;
+}
+
+export function resolveZaprySkillRequestHeaders(): Record<string, string> {
+  const invocationCtx = getZaprySkillInvocationContext();
+  return buildZaprySkillRequestHeaders({
+    senderId: invocationCtx?.senderId,
+    messageSid: invocationCtx?.messageSid,
+  });
+}

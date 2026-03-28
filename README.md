@@ -70,7 +70,7 @@ The plugin registers a `zapry` skill. Your agent will automatically use it when 
 
 ```
 You:   Post "Good morning!" to my Zapry feed
-Agent: → message { action: "create-post", channel: "zapry", content: "Good morning!" }
+Agent: → zapry_post { content: "Good morning!" }
        Done, post published.
 ```
 
@@ -86,7 +86,7 @@ Agent: → message { action: "create-post", channel: "zapry", content: "Good mor
 
 ### Parameter Conventions (Important)
 
-This plugin follows the API reference 1:1. Prefer documented parameter names in `message` tool calls:
+This plugin follows the API reference 1:1. Prefer documented parameter names in `zapry_action` / `zapry_post` tool calls:
 
 - IDs: `chat_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`, `club_id`
 - Content: `text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `content`
@@ -119,8 +119,8 @@ Audio generation helper:
 |-------|------|---------|-------------|
 | `botToken` | string | — | Bot token from BotMother (required) |
 | `apiBaseUrl` | string | `https://openapi-dev.mimo.immo` | Zapry API server URL |
-| `mode` | `"polling"` \| `"webhook"` | `"polling"` | Inbound message mode |
-| `webhookUrl` | string | — | Callback URL (required when mode is webhook) |
+| `mode` | `"polling"` \| `"webhook"` | `"polling"` | Inbound runtime now uses polling as the single processing path; `webhook` is accepted but falls back to polling |
+| `webhookUrl` | string | — | Legacy webhook callback URL, retained only for backward-compatible config parsing |
 
 ## License
 
