@@ -1,5 +1,5 @@
 import { ZapryApiClient } from "./api-client.js";
-import { getZapryRuntime } from "./runtime.js";
+import { getZapryRuntime, runWithZaprySkillInvocationContext } from "./runtime.js";
 import { sendMessageZapry } from "./send.js";
 import type { ResolvedZapryAccount } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,28 @@ type RuntimeLog = {
 };
 
 type StatusSink = (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
+
+function buildSkillInvocationHeaders(input: {
+  senderId?: string;
+  messageSid?: string;
+}): Record<string, string> {
+  const senderId = String(input.senderId ?? "").trim();
+  if (!senderId) {
+    throw new Error("missing trusted sender_id for Zapry skill invocation");
+  }
+
+  const headers: Record<string, string> = {
+    "X-Zapry-Invocation-Source": "skill",
+    "X-Zapry-Request-Sender-Id": senderId,
+  };
+
+  const messageSid = String(input.messageSid ?? "").trim();
+  if (messageSid) {
+    headers["X-Zapry-Message-Sid"] = messageSid;
+  }
+
+  return headers;
+}
 
 type MuteCommandIntent = "mute" | "unmute";
 
@@ -1940,10 +1962,13 @@ function isLikelyGroupMembersQueryMessage(text: string | undefined): boolean {
 }
 
 function buildGroupMembersLookupFailureText(errorCode?: number, description?: string): string {
+  const normalizedDesc = description?.toLowerCase() ?? "";
+  if (normalizedDesc.includes("only bot owner can execute zapry skills")) {
+    return "查询失败：只有这个机器人的 owner 才能调用这类 Zapry 能力。";
+  }
   if (errorCode === 403) {
     return "查询失败：我没有该群的查询权限，请先把我设为管理员后再试。";
   }
-  const normalizedDesc = description?.toLowerCase() ?? "";
   if (
     errorCode === 503 ||
     normalizedDesc.includes("service unavailable") ||
@@ -2237,6 +2262,9 @@ function buildMuteSuccessText(intent: MuteCommandIntent, targetHint: InboundTarg
 
 function buildMuteFailureText(intent: MuteCommandIntent, errorCode?: number, description?: string): string {
   const normalizedDesc = description?.toLowerCase() ?? "";
+  if (normalizedDesc.includes("only bot owner can execute zapry skills")) {
+    return "操作失败：只有这个机器人的 owner 才能调用这类 Zapry 能力。";
+  }
   if (
     errorCode === 403 ||
     normalizedDesc.includes("no permission") ||
@@ -2350,7 +2378,12 @@ async function tryHandleMuteCommandQuickPath(params: {
         log,
       });
     }
-    const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+    const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+      defaultHeaders: buildSkillInvocationHeaders({
+        senderId: parsed.senderId,
+        messageSid: parsed.messageSid,
+      }),
+    });
     return executeMuteCommandWithTarget({
       client,
       account,
@@ -2374,7 +2407,12 @@ async function tryHandleMuteCommandQuickPath(params: {
     clearPendingMuteConfirmation(parsed.chatId, parsed.senderId);
   }
 
-  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+    defaultHeaders: buildSkillInvocationHeaders({
+      senderId: parsed.senderId,
+      messageSid: parsed.messageSid,
+    }),
+  });
   if (parsed.targetUserHints.length === 0) {
     const lookedUpTarget = await lookupMuteTargetCandidateFromGroupMembers({
       client,
@@ -2442,7 +2480,12 @@ async function tryHandleGroupMembersQueryQuickPath(params: {
     return false;
   }
 
-  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+    defaultHeaders: buildSkillInvocationHeaders({
+      senderId: parsed.senderId,
+      messageSid: parsed.messageSid,
+    }),
+  });
   try {
     const lookup = await queryGroupMembersForQuickReply({
       client,
@@ -3362,27 +3405,35 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   const typingClient = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
   typingClient.sendChatAction(parsed.chatId, "typing").catch(() => {});
 
-  await dispatchReply({
-    ctx: ctxPayload,
-    cfg,
-    dispatcherOptions: {
-      deliver: async (payload: any) => {
-        await deliverZapryReply({
-          runtime,
-          cfg,
-          account,
-          chatId: parsed.chatId,
-          payload,
-          statusSink,
-          log,
-        });
+  await runWithZaprySkillInvocationContext({
+    senderId: String(ctxPayload.SenderId ?? parsed.senderId ?? "").trim(),
+    messageSid: String(ctxPayload.MessageSid ?? parsed.messageSid ?? "").trim(),
+    sessionKey: String(ctxPayload.SessionKey ?? route.sessionKey ?? "").trim(),
+    accountId: account.accountId,
+    chatId: parsed.chatId,
+  }, async () => {
+    await dispatchReply({
+      ctx: ctxPayload,
+      cfg,
+      dispatcherOptions: {
+        deliver: async (payload: any) => {
+          await deliverZapryReply({
+            runtime,
+            cfg,
+            account,
+            chatId: parsed.chatId,
+            payload,
+            statusSink,
+            log,
+          });
+        },
+        onError: (err: unknown, info: { kind?: string }) => {
+          log?.warn?.(
+            `[${account.accountId}] Zapry ${info?.kind ?? "reply"} dispatch failed: ${String(err)}`,
+          );
+        },
       },
-      onError: (err: unknown, info: { kind?: string }) => {
-        log?.warn?.(
-          `[${account.accountId}] Zapry ${info?.kind ?? "reply"} dispatch failed: ${String(err)}`,
-        );
-      },
-    },
+    });
   });
 
   return true;

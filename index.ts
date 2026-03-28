@@ -34,7 +34,7 @@ try {
 } catch {}
 
 import { zapryPlugin } from "./src/channel.js";
-import { setZapryRuntime } from "./src/runtime.js";
+import { getZaprySkillInvocationContext, setZapryRuntime } from "./src/runtime.js";
 import { resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
 
@@ -69,6 +69,26 @@ async function resolveRuntimeConfig(api: any): Promise<any> {
     }
   }
   return runtimeConfig ?? {};
+}
+
+function resolveSkillRequestHeaders(): Record<string, string> {
+  const invocationCtx = getZaprySkillInvocationContext();
+  const senderId = String(invocationCtx?.senderId ?? "").trim();
+  if (!senderId) {
+    throw new Error("Zapry skill invocation requires trusted inbound sender context");
+  }
+
+  const headers: Record<string, string> = {
+    "X-Zapry-Invocation-Source": "skill",
+    "X-Zapry-Request-Sender-Id": senderId,
+  };
+
+  const messageSid = String(invocationCtx?.messageSid ?? "").trim();
+  if (messageSid) {
+    headers["X-Zapry-Message-Sid"] = messageSid;
+  }
+
+  return headers;
 }
 
 const plugin = {
@@ -115,6 +135,7 @@ const plugin = {
             channel: "zapry",
             account,
             params: { content: args.content, images: args.images },
+            requestHeaders: resolveSkillRequestHeaders(),
           });
           return JSON.stringify(result, null, 2);
         } catch (err) {
@@ -228,6 +249,7 @@ const plugin = {
             channel: "zapry",
             account,
             params,
+            requestHeaders: resolveSkillRequestHeaders(),
           });
           return JSON.stringify(result, null, 2);
         } catch (err) {

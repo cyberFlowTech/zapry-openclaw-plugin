@@ -25,7 +25,21 @@ export class ZapryApiClient {
   constructor(
     private baseUrl: string,
     private botToken: string,
+    private options?: {
+      defaultHeaders?: Record<string, string>;
+    },
   ) {}
+
+  private buildHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
+    return {
+      ...(this.options?.defaultHeaders ?? {}),
+      ...(extraHeaders ?? {}),
+    };
+  }
+
+  getRequestHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
+    return this.buildHeaders(extraHeaders);
+  }
 
   private async request<T = unknown>(opts: {
     methodPath: string;
@@ -36,7 +50,7 @@ export class ZapryApiClient {
     const url = `${this.baseUrl}/${this.botToken}/${methodPath}`;
     const resp = await fetch(url, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: this.buildHeaders({ "Content-Type": "application/json" }),
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
     if (!resp.ok) {
