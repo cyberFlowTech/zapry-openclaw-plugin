@@ -207,7 +207,11 @@ function resolveOwnerIdFromBotToken(botToken: string | undefined): string {
 
 function buildNonOwnerSkillReplyGuidance(senderIsOwner: boolean): string {
   if (senderIsOwner) {
-    return "";
+    return [
+      "权限规则：当前发起消息的人就是这个机器人的主人。",
+      "如果用户要求你调用 owner-only 的 Zapry 平台能力，例如查询好友列表、查询好友申请、发帖、改名、加好友、群管理、Webhook、资料或技能设置等，你可以正常调用 `zapry_action` 或 `zapry_post`。",
+      "不要因为本群上一轮对非 owner 的拒绝历史，就误判当前 owner 请求。",
+    ].join("\n");
   }
   return [
     "权限规则：当前发起消息的人不是这个机器人的主人。",

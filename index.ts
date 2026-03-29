@@ -105,7 +105,12 @@ function resolveToolAccount(toolCtx: any, cfg: any, requestedAccountId?: string)
 }
 
 function resolveToolSenderId(toolCtx: any): string {
-  return String(toolCtx?.requesterSenderId ?? "").trim();
+  const senderIdFromToolCtx = String(toolCtx?.requesterSenderId ?? "").trim();
+  if (senderIdFromToolCtx) {
+    return senderIdFromToolCtx;
+  }
+  const invocationCtx = getZaprySkillInvocationContext();
+  return String(invocationCtx?.senderId ?? "").trim();
 }
 
 function resolveToolSenderIsOwner(toolCtx: any, account: { botToken: string }): boolean {

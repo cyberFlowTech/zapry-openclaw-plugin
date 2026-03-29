@@ -1,4 +1,4 @@
-# @zapry/openclaw-plugin
+# zapry-openclaw-plugin
 
 OpenClaw channel plugin for [Zapry](https://zapry.io) — a social platform with messaging, groups, feed, clubs, and wallet.
 
@@ -16,8 +16,10 @@ Install this plugin to let your OpenClaw agent interact with Zapry through `chan
 ## Install
 
 ```bash
-openclaw plugins install @zapry/openclaw-plugin
+openclaw plugins install zapry-openclaw-plugin
 ```
+
+The npm package name is `zapry-openclaw-plugin`, while the OpenClaw plugin/channel id remains `zapry`.
 
 ## Development Notes
 
