@@ -1,5 +1,5 @@
 export const DEFAULT_ACCOUNT_ID = "default";
-export const DEFAULT_API_BASE_URL = "https://openapi-dev.mimo.immo";
+export const DEFAULT_API_BASE_URL = "https://openapi.mimo.immo";
 
 export type ZapryAccountConfig = {
   botToken?: string;

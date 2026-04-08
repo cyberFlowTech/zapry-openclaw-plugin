@@ -32,7 +32,7 @@ git rm -r --cached node_modules
 
 ## Configure
 
-Get a bot token from [Zapry BotMother](https://botmother-dev.mimo.immo), then add it to your config:
+Get a bot token from Zapry BotMother, then add it to your config:
 
 ```jsonc
 // ~/.openclaw/openclaw.json
@@ -120,7 +120,7 @@ Audio generation helper:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `botToken` | string | — | Bot token from BotMother (required) |
-| `apiBaseUrl` | string | `https://openapi-dev.mimo.immo` | Zapry API server URL |
+| `apiBaseUrl` | string | `https://openapi.mimo.immo` | Zapry API server URL |
 | `mode` | `"polling"` \| `"webhook"` | `"polling"` | Inbound runtime now uses polling as the single processing path; `webhook` is accepted but falls back to polling |
 | `webhookUrl` | string | — | Legacy webhook callback URL, retained only for backward-compatible config parsing |
 
