@@ -1,4 +1,4 @@
-# @zapry/openclaw-plugin
+# zapry-openclaw-plugin
 
 OpenClaw channel plugin for [Zapry](https://zapry.io) — a social platform with messaging, groups, feed, clubs, and wallet.
 
@@ -16,8 +16,10 @@ Install this plugin to let your OpenClaw agent interact with Zapry through `chan
 ## Install
 
 ```bash
-openclaw plugins install @zapry/openclaw-plugin
+openclaw plugins install zapry-openclaw-plugin
 ```
+
+The npm package name is `zapry-openclaw-plugin`, while the OpenClaw plugin/channel id remains `zapry`.
 
 ## Development Notes
 
@@ -30,7 +32,7 @@ git rm -r --cached node_modules
 
 ## Configure
 
-Get a bot token from [Zapry BotMother](https://botmother-dev.mimo.immo), then add it to your config:
+Get a bot token from Zapry BotMother, then add it to your config:
 
 ```jsonc
 // ~/.openclaw/openclaw.json
@@ -70,7 +72,7 @@ The plugin registers a `zapry` skill. Your agent will automatically use it when 
 
 ```
 You:   Post "Good morning!" to my Zapry feed
-Agent: → message { action: "create-post", channel: "zapry", content: "Good morning!" }
+Agent: → zapry_post { content: "Good morning!" }
        Done, post published.
 ```
 
@@ -86,7 +88,7 @@ Agent: → message { action: "create-post", channel: "zapry", content: "Good mor
 
 ### Parameter Conventions (Important)
 
-This plugin follows the API reference 1:1. Prefer documented parameter names in `message` tool calls:
+This plugin follows the API reference 1:1. Prefer documented parameter names in `zapry_action` / `zapry_post` tool calls:
 
 - IDs: `chat_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`, `club_id`
 - Content: `text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `content`
@@ -118,9 +120,9 @@ Audio generation helper:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `botToken` | string | — | Bot token from BotMother (required) |
-| `apiBaseUrl` | string | `https://openapi-dev.mimo.immo` | Zapry API server URL |
-| `mode` | `"polling"` \| `"webhook"` | `"polling"` | Inbound message mode |
-| `webhookUrl` | string | — | Callback URL (required when mode is webhook) |
+| `apiBaseUrl` | string | `https://openapi.mimo.immo` | Zapry API server URL |
+| `mode` | `"polling"` \| `"webhook"` | `"polling"` | Inbound runtime now uses polling as the single processing path; `webhook` is accepted but falls back to polling |
+| `webhookUrl` | string | — | Legacy webhook callback URL, retained only for backward-compatible config parsing |
 | `profileSync.enabled` | boolean | `true` | Whether to auto-sync SOUL+skills to Zapry on startup (`setMyProfile`) |
 
 ## License

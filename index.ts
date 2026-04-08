@@ -34,7 +34,12 @@ try {
 } catch {}
 
 import { zapryPlugin } from "./src/channel.js";
-import { setZapryRuntime } from "./src/runtime.js";
+import {
+  buildZaprySkillRequestHeaders,
+  getZaprySkillInvocationContext,
+  resolveZaprySkillRequestHeaders,
+  setZapryRuntime,
+} from "./src/runtime.js";
 import { resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
 
@@ -71,6 +76,85 @@ async function resolveRuntimeConfig(api: any): Promise<any> {
   return runtimeConfig ?? {};
 }
 
+function sameUserIdentity(left: string, right: string): boolean {
+  const normalizedLeft = left.trim();
+  const normalizedRight = right.trim();
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  if (normalizedLeft === normalizedRight) {
+    return true;
+  }
+
+  const leftNum = Number(normalizedLeft);
+  const rightNum = Number(normalizedRight);
+  return Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum === rightNum;
+}
+
+function resolveOwnerIdFromBotToken(botToken: string): string {
+  const trimmed = String(botToken ?? "").trim();
+  const separatorIdx = trimmed.indexOf(":");
+  if (separatorIdx <= 0) {
+    return "";
+  }
+  return trimmed.slice(0, separatorIdx).trim();
+}
+
+function resolveToolAccount(toolCtx: any, cfg: any, requestedAccountId?: string) {
+  return resolveZapryAccount(cfg, requestedAccountId ?? toolCtx?.agentAccountId);
+}
+
+function resolveToolSenderId(toolCtx: any): string {
+  const senderIdFromToolCtx = String(toolCtx?.requesterSenderId ?? "").trim();
+  if (senderIdFromToolCtx) {
+    return senderIdFromToolCtx;
+  }
+  const invocationCtx = getZaprySkillInvocationContext();
+  return String(invocationCtx?.senderId ?? "").trim();
+}
+
+function resolveToolSenderIsOwner(toolCtx: any, account: { botToken: string }): boolean {
+  if (toolCtx?.senderIsOwner === true) {
+    return true;
+  }
+  if (toolCtx?.senderIsOwner === false) {
+    return false;
+  }
+  const senderId = resolveToolSenderId(toolCtx);
+  const ownerId = resolveOwnerIdFromBotToken(account.botToken);
+  return sameUserIdentity(senderId, ownerId);
+}
+
+function shouldExposeZapryOwnerTools(toolCtx: any, account: { botToken: string }): boolean {
+  if (toolCtx?.messageChannel !== "zapry") {
+    return true;
+  }
+  const senderId = resolveToolSenderId(toolCtx);
+  if (!senderId) {
+    return false;
+  }
+  return resolveToolSenderIsOwner(toolCtx, account);
+}
+
+function resolveToolRequestHeaders(toolCtx: any): Record<string, string> {
+  const senderId = resolveToolSenderId(toolCtx);
+  if (senderId) {
+    const invocationCtx = getZaprySkillInvocationContext();
+    return buildZaprySkillRequestHeaders({
+      senderId,
+      messageSid: invocationCtx?.messageSid,
+    });
+  }
+  return resolveZaprySkillRequestHeaders();
+}
+
+function ownerDeniedToolResult(): string {
+  return JSON.stringify({
+    ok: false,
+    error: "只能是主人才可以调用",
+  });
+}
+
 const plugin = {
   id: "zapry",
   name: "Zapry",
@@ -84,159 +168,181 @@ const plugin = {
     setZapryRuntime(api.runtime);
     api.registerChannel({ plugin: zapryPlugin });
 
-    api.registerTool({
-      name: "zapry_post",
-      label: "Zapry Post to Feed",
-      description:
-        "Post to Zapry public feed (广场). This is the ONLY way to create a feed post. " +
-        "Pass content and optionally images. No target or routing needed.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          content: {
-            type: "string" as const,
-            description: "Post text content (required)",
+    api.registerTool((toolCtx: any) => {
+      const toolCfg = toolCtx?.config ?? api?.runtime?.config ?? {};
+      const account = resolveToolAccount(toolCtx, toolCfg);
+      if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+        return null;
+      }
+      return {
+        name: "zapry_post",
+        label: "Zapry Post to Feed",
+        description:
+          "Post to Zapry public feed (广场). This is the ONLY way to create a feed post. " +
+          "Pass content and optionally images. No target or routing needed.",
+        parameters: {
+          type: "object" as const,
+          properties: {
+            content: {
+              type: "string" as const,
+              description: "Post text content (required)",
+            },
+            images: {
+              type: "array" as const,
+              items: { type: "string" as const },
+              description:
+                "Array of image sources: local file paths, data: URIs, HTTP(S) URLs, or Zapry file IDs (mf_*)",
+            },
           },
-          images: {
-            type: "array" as const,
-            items: { type: "string" as const },
-            description:
-              "Array of image sources: local file paths, data: URIs, HTTP(S) URLs, or Zapry file IDs (mf_*)",
-          },
+          required: ["content"],
         },
-        required: ["content"],
-      },
-      execute: async (_toolCallId: string, args: Record<string, any>) => {
-        try {
-          const cfg = await resolveRuntimeConfig(api);
-          const account = resolveZapryAccount(cfg);
-          const result = await handleZapryAction({
-            action: "create-post",
-            channel: "zapry",
-            account,
-            params: { content: args.content, images: args.images },
-          });
-          return JSON.stringify(result, null, 2);
-        } catch (err) {
-          return JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      },
+        execute: async (_toolCallId: string, args: Record<string, any>) => {
+          try {
+            const cfg = await resolveRuntimeConfig(api);
+            const account = resolveToolAccount(toolCtx, cfg);
+            if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+              return ownerDeniedToolResult();
+            }
+            const result = await handleZapryAction({
+              action: "create-post",
+              channel: "zapry",
+              account,
+              params: { content: args.content, images: args.images },
+              requestHeaders: resolveToolRequestHeaders(toolCtx),
+            });
+            return JSON.stringify(result, null, 2);
+          } catch (err) {
+            return JSON.stringify({
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        },
+      };
     });
 
-    api.registerTool({
-      name: "zapry_action",
-      label: "Zapry Platform Action",
-      description:
-        "Execute a Zapry platform action. Use this for: " +
-        "sending media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
-        "IMPORTANT: For send-photo, if user asks for an image without providing one, use 'prompt' parameter (e.g. action='send-photo', prompt='bitcoin logo') — image is auto-generated, NO photo/URL needed. " +
-        "profile queries (get-my-profile, get-me), friend operations " +
-        "(get-my-friend-requests, accept-friend-request, add-friend, etc.), " +
-        "group management (get-chat-members, mute-chat-member, kick-chat-member, etc.), " +
-        "feed reading (get-trending-posts, get-latest-posts, search-posts, etc.), " +
-        "feed interactions (delete-post, comment-post, like-post, share-post), " +
-        "bot settings (set-my-soul, set-my-skills, set-my-name, etc.), " +
-        "chat history (get-chat-history), " +
-        "and webhook/file operations (get-file, set-webhook, get-updates, etc.). " +
-        "Pass the action name and action-specific parameters as top-level fields.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          action: {
-            type: "string" as const,
-            description: "The Zapry action to execute",
-            enum: [...ZAPRY_ACTION_TOOL_ACTIONS],
+    api.registerTool((toolCtx: any) => {
+      const toolCfg = toolCtx?.config ?? api?.runtime?.config ?? {};
+      const account = resolveToolAccount(toolCtx, toolCfg);
+      if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+        return null;
+      }
+      return {
+        name: "zapry_action",
+        label: "Zapry Platform Action",
+        description:
+          "Execute a Zapry platform action. Use this for: " +
+          "sending media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
+          "IMPORTANT: For send-photo, if user asks for an image without providing one, use 'prompt' parameter (e.g. action='send-photo', prompt='bitcoin logo') — image is auto-generated, NO photo/URL needed. " +
+          "profile queries (get-my-profile, get-me), friend operations " +
+          "(get-my-friend-requests, accept-friend-request, add-friend, etc.), " +
+          "group management (get-chat-members, mute-chat-member, kick-chat-member, etc.), " +
+          "feed reading (get-trending-posts, get-latest-posts, search-posts, etc.), " +
+          "feed interactions (delete-post, comment-post, like-post, share-post), " +
+          "bot settings (set-my-soul, set-my-skills, set-my-name, etc.), " +
+          "chat history (get-chat-history), " +
+          "and webhook/file operations (get-file, set-webhook, get-updates, etc.). " +
+          "Pass the action name and action-specific parameters as top-level fields.",
+        parameters: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string" as const,
+              description: "The Zapry action to execute",
+              enum: [...ZAPRY_ACTION_TOOL_ACTIONS],
+            },
+            chat_id: {
+              type: "string" as const,
+              description: "Chat/group ID (for group management actions like get-chat-members, mute-chat-member, etc.)",
+            },
+            user_id: {
+              type: "string" as const,
+              description: "User ID (for friend actions, chat member actions, etc.)",
+            },
+            file_id: {
+              type: "string" as const,
+              description: "File ID (for get-file)",
+            },
+            keyword: {
+              type: "string" as const,
+              description: "Search keyword (for search-posts)",
+            },
+            dynamic_id: {
+              type: "string" as const,
+              description: "Post/dynamic ID (for delete-post, comment-post, like-post, share-post)",
+            },
+            photo: {
+              type: "string" as const,
+              description: "Photo source: external URL (auto-downloaded), data URI, local path, or /_temp/media URL (for send-photo). If omitted but 'prompt' is provided, image will be auto-generated.",
+            },
+            prompt: {
+              type: "string" as const,
+              description: "PREFERRED for send-photo when user asks for an image: describe what to generate (e.g. 'bitcoin logo', 'cute cat'). Image is auto-generated and sent — no photo/URL needed.",
+            },
+            video: {
+              type: "string" as const,
+              description: "Video source (for send-video)",
+            },
+            document: {
+              type: "string" as const,
+              description: "Document source (for send-document)",
+            },
+            audio: {
+              type: "string" as const,
+              description: "Audio source (for send-audio)",
+            },
+            voice: {
+              type: "string" as const,
+              description: "Voice source (for send-voice)",
+            },
+            animation: {
+              type: "string" as const,
+              description: "Animation/GIF source (for send-animation)",
+            },
+            content: {
+              type: "string" as const,
+              description: "Text content (for comment-post)",
+            },
+            limit: {
+              type: "number" as const,
+              description: "Limit for results (for get-chat-history, default 50, max 50)",
+            },
+            page: {
+              type: "number" as const,
+              description: "Page number for paginated results",
+            },
+            page_size: {
+              type: "number" as const,
+              description: "Page size for paginated results",
+            },
           },
-          chat_id: {
-            type: "string" as const,
-            description: "Chat/group ID (for group management actions like get-chat-members, mute-chat-member, etc.)",
-          },
-          user_id: {
-            type: "string" as const,
-            description: "User ID (for friend actions, chat member actions, etc.)",
-          },
-          file_id: {
-            type: "string" as const,
-            description: "File ID (for get-file)",
-          },
-          keyword: {
-            type: "string" as const,
-            description: "Search keyword (for search-posts)",
-          },
-          dynamic_id: {
-            type: "string" as const,
-            description: "Post/dynamic ID (for delete-post, comment-post, like-post, share-post)",
-          },
-          photo: {
-            type: "string" as const,
-            description: "Photo source: external URL (auto-downloaded), data URI, local path, or /_temp/media URL (for send-photo). If omitted but 'prompt' is provided, image will be auto-generated.",
-          },
-          prompt: {
-            type: "string" as const,
-            description: "PREFERRED for send-photo when user asks for an image: describe what to generate (e.g. 'bitcoin logo', 'cute cat'). Image is auto-generated and sent — no photo/URL needed.",
-          },
-          video: {
-            type: "string" as const,
-            description: "Video source (for send-video)",
-          },
-          document: {
-            type: "string" as const,
-            description: "Document source (for send-document)",
-          },
-          audio: {
-            type: "string" as const,
-            description: "Audio source (for send-audio)",
-          },
-          voice: {
-            type: "string" as const,
-            description: "Voice source (for send-voice)",
-          },
-          animation: {
-            type: "string" as const,
-            description: "Animation/GIF source (for send-animation)",
-          },
-          content: {
-            type: "string" as const,
-            description: "Text content (for comment-post)",
-          },
-          limit: {
-            type: "number" as const,
-            description: "Limit for results (for get-chat-history, default 50, max 50)",
-          },
-          page: {
-            type: "number" as const,
-            description: "Page number for paginated results",
-          },
-          page_size: {
-            type: "number" as const,
-            description: "Page size for paginated results",
-          },
+          required: ["action"],
+          additionalProperties: true,
         },
-        required: ["action"],
-        additionalProperties: true,
-      },
-      execute: async (_toolCallId: string, args: Record<string, any>) => {
-        try {
-          const { action, channel: _ch, accountId: reqAccountId, ...params } = args ?? {};
-          const cfg = await resolveRuntimeConfig(api);
-          const account = resolveZapryAccount(cfg, reqAccountId);
-          const result = await handleZapryAction({
-            action,
-            channel: "zapry",
-            account,
-            params,
-          });
-          return JSON.stringify(result, null, 2);
-        } catch (err) {
-          return JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      },
+        execute: async (_toolCallId: string, args: Record<string, any>) => {
+          try {
+            const { action, channel: _ch, accountId: reqAccountId, ...params } = args ?? {};
+            const cfg = await resolveRuntimeConfig(api);
+            const account = resolveToolAccount(toolCtx, cfg, reqAccountId);
+            if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+              return ownerDeniedToolResult();
+            }
+            const result = await handleZapryAction({
+              action,
+              channel: "zapry",
+              account,
+              params,
+              requestHeaders: resolveToolRequestHeaders(toolCtx),
+            });
+            return JSON.stringify(result, null, 2);
+          } catch (err) {
+            return JSON.stringify({
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        },
+      };
     });
   },
 };

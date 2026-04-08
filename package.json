@@ -1,20 +1,32 @@
 {
-  "name": "zapry",
-  "version": "1.0.0",
+  "name": "zapry-openclaw-plugin",
+  "version": "0.0.3",
   "description": "OpenClaw Zapry channel plugin — messaging, groups, feed, clubs, and bot self-management",
   "type": "module",
   "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./openclaw.plugin.json": "./openclaw.plugin.json"
+  },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ]
   },
   "files": [
-    "index.ts",
-    "src/",
+    "dist/",
     "skills/",
     "openclaw.plugin.json"
   ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^5.9.3"

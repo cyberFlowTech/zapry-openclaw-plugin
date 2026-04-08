@@ -7,8 +7,6 @@ export type MonitorContext = {
   cfg?: any;
   runtime?: any;
   abortSignal?: AbortSignal;
-  onUpdate?: (update: any) => void;
-  onMessage?: (message: any, update?: any) => void;
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
   log?: {
     info: (...args: any[]) => void;
@@ -53,8 +51,7 @@ export async function monitorZapryProvider(ctx: MonitorContext): Promise<void> {
 }
 
 async function dispatchInboundUpdate(ctx: MonitorContext, update: any): Promise<boolean> {
-  const { onUpdate, onMessage, statusSink, log } = ctx;
-  const now = Date.now();
+  const { statusSink, log } = ctx;
 
   // Priority quick paths: handle deterministic moderation actions before any host callback mode.
   const handledByQuickPath = await tryHandleZapryInboundQuickPaths({
@@ -67,29 +64,6 @@ async function dispatchInboundUpdate(ctx: MonitorContext, update: any): Promise<
     return true;
   }
 
-  // Compatibility mode #1: OpenClaw legacy gateway callback.
-  if (typeof onUpdate === "function") {
-    try {
-      await Promise.resolve(onUpdate(update));
-      statusSink?.({ lastInboundAt: now });
-      return true;
-    } catch (err) {
-      log?.warn(`[${ctx.account.accountId}] legacy onUpdate failed: ${String(err)}`);
-    }
-  }
-
-  // Compatibility mode #2: message-level callback style used in some forks.
-  if (typeof onMessage === "function" && update?.message) {
-    try {
-      await Promise.resolve(onMessage(update.message, update));
-      statusSink?.({ lastInboundAt: now });
-      return true;
-    } catch (err) {
-      log?.warn(`[${ctx.account.accountId}] legacy onMessage failed: ${String(err)}`);
-    }
-  }
-
-  // Compatibility mode #3: modern runtime pipeline (monitor + processMessage + statusSink).
   return processZapryInboundUpdate({
     account: ctx.account,
     cfg: ctx.cfg,
@@ -158,30 +132,11 @@ async function startPollingMode(ctx: MonitorContext): Promise<void> {
 }
 
 async function startWebhookMode(ctx: MonitorContext): Promise<void> {
-  const { account, onUpdate, onMessage, log } = ctx;
-  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
-
-  const webhookUrl = account.config.webhookUrl;
-  if (!webhookUrl) {
-    log?.warn(`[${account.accountId}] webhook mode requires webhookUrl, falling back to polling`);
-    return startPollingMode(ctx);
-  }
-
-  // New runtime currently relies on plugin-managed polling for inbound processing.
-  // Keep webhook path for backward-compatibility when legacy callbacks are wired by host.
-  if (typeof onUpdate !== "function" && typeof onMessage !== "function") {
-    log?.warn(
-      `[${account.accountId}] webhook callback bridge unavailable in this host, falling back to polling`,
-    );
-    return startPollingMode(ctx);
-  }
-
-  const resp = await client.setWebhook(webhookUrl);
-  if (!resp.ok) {
-    log?.warn(`[${account.accountId}] setWebhook failed: ${resp.description}, falling back to polling`);
-    return startPollingMode(ctx);
-  }
-  log?.info(`[${account.accountId}] webhook set to ${webhookUrl}`);
+  const { account, log } = ctx;
+  log?.warn(
+    `[${account.accountId}] webhook inbound mode has been removed from the plugin runtime, falling back to polling`,
+  );
+  return startPollingMode(ctx);
 }
 
 function sleep(ms: number): Promise<void> {

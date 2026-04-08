@@ -1,5 +1,5 @@
 import { ZapryApiClient } from "./api-client.js";
-import { getZapryRuntime } from "./runtime.js";
+import { getZapryRuntime, runWithZaprySkillInvocationContext } from "./runtime.js";
 import { sendMessageZapry } from "./send.js";
 import type { ResolvedZapryAccount } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,28 @@ type RuntimeLog = {
 };
 
 type StatusSink = (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
+
+function buildSkillInvocationHeaders(input: {
+  senderId?: string;
+  messageSid?: string;
+}): Record<string, string> {
+  const senderId = String(input.senderId ?? "").trim();
+  if (!senderId) {
+    throw new Error("missing trusted sender_id for Zapry skill invocation");
+  }
+
+  const headers: Record<string, string> = {
+    "X-Zapry-Invocation-Source": "skill",
+    "X-Zapry-Request-Sender-Id": senderId,
+  };
+
+  const messageSid = String(input.messageSid ?? "").trim();
+  if (messageSid) {
+    headers["X-Zapry-Message-Sid"] = messageSid;
+  }
+
+  return headers;
+}
 
 type MuteCommandIntent = "mute" | "unmute";
 
@@ -158,6 +180,57 @@ function asNonEmptyString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function sameUserIdentity(left: string | undefined, right: string | undefined): boolean {
+  const normalizedLeft = String(left ?? "").trim();
+  const normalizedRight = String(right ?? "").trim();
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  if (normalizedLeft === normalizedRight) {
+    return true;
+  }
+  const leftNum = Number(normalizedLeft);
+  const rightNum = Number(normalizedRight);
+  return Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum === rightNum;
+}
+
+function resolveOwnerIdFromBotToken(botToken: string | undefined): string {
+  const trimmed = String(botToken ?? "").trim();
+  const separatorIdx = trimmed.indexOf(":");
+  if (separatorIdx <= 0) {
+    return "";
+  }
+  return trimmed.slice(0, separatorIdx).trim();
+}
+
+function buildNonOwnerSkillReplyGuidance(senderIsOwner: boolean): string {
+  if (senderIsOwner) {
+    return [
+      "权限规则：当前发起消息的人就是这个机器人的主人。",
+      "如果用户要求你调用 owner-only 的 Zapry 平台能力，例如查询好友列表、查询好友申请、发帖、改名、加好友、群管理、Webhook、资料或技能设置等，你可以正常调用 `zapry_action` 或 `zapry_post`。",
+      "不要因为本群上一轮对非 owner 的拒绝历史，就误判当前 owner 请求。",
+    ].join("\n");
+  }
+  return [
+    "权限规则：当前发起消息的人不是这个机器人的主人。",
+    "如果用户要求你调用任何 Zapry 平台能力，例如查询好友列表、查询群/聊天记录、发帖、改名、加好友、群管理、Webhook、资料或技能设置等，你禁止调用 `zapry_action` 或 `zapry_post`。",
+    "遇到这类请求时，你必须直接回复且只回复：只能是主人才可以调用",
+    "普通闲聊、解释说明、媒体内容理解仍然可以正常回答。",
+  ].join("\n");
+}
+
+function appendGuidanceBlock(body: string, guidance: string): string {
+  const normalizedBody = body.trim();
+  const normalizedGuidance = guidance.trim();
+  if (!normalizedGuidance) {
+    return normalizedBody;
+  }
+  if (!normalizedBody) {
+    return normalizedGuidance;
+  }
+  return `${normalizedBody}\n\n${normalizedGuidance}`;
 }
 
 function parseTimestampMs(value: unknown): number | undefined {
@@ -1940,10 +2013,13 @@ function isLikelyGroupMembersQueryMessage(text: string | undefined): boolean {
 }
 
 function buildGroupMembersLookupFailureText(errorCode?: number, description?: string): string {
+  const normalizedDesc = description?.toLowerCase() ?? "";
+  if (normalizedDesc.includes("only bot owner can execute zapry skills")) {
+    return "只能是主人才可以调用";
+  }
   if (errorCode === 403) {
     return "查询失败：我没有该群的查询权限，请先把我设为管理员后再试。";
   }
-  const normalizedDesc = description?.toLowerCase() ?? "";
   if (
     errorCode === 503 ||
     normalizedDesc.includes("service unavailable") ||
@@ -2237,6 +2313,9 @@ function buildMuteSuccessText(intent: MuteCommandIntent, targetHint: InboundTarg
 
 function buildMuteFailureText(intent: MuteCommandIntent, errorCode?: number, description?: string): string {
   const normalizedDesc = description?.toLowerCase() ?? "";
+  if (normalizedDesc.includes("only bot owner can execute zapry skills")) {
+    return "只能是主人才可以调用";
+  }
   if (
     errorCode === 403 ||
     normalizedDesc.includes("no permission") ||
@@ -2350,7 +2429,12 @@ async function tryHandleMuteCommandQuickPath(params: {
         log,
       });
     }
-    const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+    const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+      defaultHeaders: buildSkillInvocationHeaders({
+        senderId: parsed.senderId,
+        messageSid: parsed.messageSid,
+      }),
+    });
     return executeMuteCommandWithTarget({
       client,
       account,
@@ -2374,7 +2458,12 @@ async function tryHandleMuteCommandQuickPath(params: {
     clearPendingMuteConfirmation(parsed.chatId, parsed.senderId);
   }
 
-  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+    defaultHeaders: buildSkillInvocationHeaders({
+      senderId: parsed.senderId,
+      messageSid: parsed.messageSid,
+    }),
+  });
   if (parsed.targetUserHints.length === 0) {
     const lookedUpTarget = await lookupMuteTargetCandidateFromGroupMembers({
       client,
@@ -2442,7 +2531,12 @@ async function tryHandleGroupMembersQueryQuickPath(params: {
     return false;
   }
 
-  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+    defaultHeaders: buildSkillInvocationHeaders({
+      senderId: parsed.senderId,
+      messageSid: parsed.messageSid,
+    }),
+  });
   try {
     const lookup = await queryGroupMembersForQuickReply({
       client,
@@ -3227,6 +3321,9 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   }
 
   const cfg = resolveConfig(params.cfg, runtime);
+  const botOwnerId = resolveOwnerIdFromBotToken(account.botToken);
+  const senderIsOwner = sameUserIdentity(parsed.senderId, botOwnerId);
+  const nonOwnerSkillGuidance = buildNonOwnerSkillReplyGuidance(senderIsOwner);
   const contextMediaItems = buildContextMediaItems(parsed.recentContext, parsed.enrichedReply, parsed.mediaItems);
   const allMediaItems = [...parsed.mediaItems, ...contextMediaItems];
   const resolvedMediaItems = await enrichInboundMediaItems(account, allMediaItems, log);
@@ -3243,15 +3340,17 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     parsed.recentContext,
     parsed.enrichedReply,
   );
-  if (!rawBody) {
+  const bodyForAgent = appendGuidanceBlock(rawBody, nonOwnerSkillGuidance);
+  if (!bodyForAgent) {
     return false;
   }
-  const commandBody = resolveCommandBody(
+  const commandBodyBase = resolveCommandBody(
     parsed.sourceText,
     mediaItems,
     transcript,
     parsed.targetUserHints,
   );
+  const commandBody = appendGuidanceBlock(commandBodyBase, nonOwnerSkillGuidance);
   const stagedMedia = mediaItems.flatMap((item) =>
     item.stagedPath
       ? [
@@ -3304,13 +3403,13 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
           timestamp: parsed.timestampMs,
           previousTimestamp,
           envelope: envelopeOptions,
-          body: rawBody,
+          body: bodyForAgent,
         })
-      : rawBody;
+      : bodyForAgent;
 
   const inboundCtxBase = {
     Body: body,
-    BodyForAgent: rawBody,
+    BodyForAgent: bodyForAgent,
     RawBody: rawBody,
     CommandBody: commandBody,
     From: parsed.isGroup ? `zapry:group:${parsed.chatId}` : `zapry:${parsed.senderId}`,
@@ -3321,6 +3420,8 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     ConversationLabel: fromLabel,
     SenderName: parsed.senderName || undefined,
     SenderId: parsed.senderId,
+    BotOwnerId: botOwnerId || undefined,
+    SenderIsOwner: senderIsOwner,
     TargetUserHints: parsed.targetUserHints.length > 0 ? parsed.targetUserHints : undefined,
     MentionedUserIds:
       parsed.targetUserHints.length > 0 ? parsed.targetUserHints.map((item) => item.userId) : undefined,
@@ -3362,27 +3463,35 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   const typingClient = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
   typingClient.sendChatAction(parsed.chatId, "typing").catch(() => {});
 
-  await dispatchReply({
-    ctx: ctxPayload,
-    cfg,
-    dispatcherOptions: {
-      deliver: async (payload: any) => {
-        await deliverZapryReply({
-          runtime,
-          cfg,
-          account,
-          chatId: parsed.chatId,
-          payload,
-          statusSink,
-          log,
-        });
+  await runWithZaprySkillInvocationContext({
+    senderId: String(ctxPayload.SenderId ?? parsed.senderId ?? "").trim(),
+    messageSid: String(ctxPayload.MessageSid ?? parsed.messageSid ?? "").trim(),
+    sessionKey: String(ctxPayload.SessionKey ?? route.sessionKey ?? "").trim(),
+    accountId: account.accountId,
+    chatId: parsed.chatId,
+  }, async () => {
+    await dispatchReply({
+      ctx: ctxPayload,
+      cfg,
+      dispatcherOptions: {
+        deliver: async (payload: any) => {
+          await deliverZapryReply({
+            runtime,
+            cfg,
+            account,
+            chatId: parsed.chatId,
+            payload,
+            statusSink,
+            log,
+          });
+        },
+        onError: (err: unknown, info: { kind?: string }) => {
+          log?.warn?.(
+            `[${account.accountId}] Zapry ${info?.kind ?? "reply"} dispatch failed: ${String(err)}`,
+          );
+        },
       },
-      onError: (err: unknown, info: { kind?: string }) => {
-        log?.warn?.(
-          `[${account.accountId}] Zapry ${info?.kind ?? "reply"} dispatch failed: ${String(err)}`,
-        );
-      },
-    },
+    });
   });
 
   return true;

@@ -11,6 +11,7 @@ export type ActionContext = {
   channel: string;
   account: ResolvedZapryAccount;
   params: Record<string, any>;
+  requestHeaders?: Record<string, string>;
 };
 
 export type ActionResult = {
@@ -163,9 +164,11 @@ const MEDIA_FIELD_TO_ENDPOINT: Record<MediaFieldName, string> = {
 };
 
 export async function handleZapryAction(ctx: ActionContext): Promise<ActionResult> {
-  const { action, account, params } = ctx;
+  const { action, account, params, requestHeaders } = ctx;
   const normalizedAction = resolveActionForRuntime(action, params);
-  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken);
+  const client = new ZapryApiClient(account.config.apiBaseUrl, account.botToken, {
+    defaultHeaders: requestHeaders,
+  });
   const normalized = normalizeActionParams(normalizedAction, params);
 
   if (isNonEmptyString(normalized.chat_id) && !isStandardChatId(normalized.chat_id)) {
@@ -463,7 +466,11 @@ async function sendMediaMultipart(
   const endpoint = MEDIA_FIELD_TO_ENDPOINT[fieldName] ?? `send${fieldName.charAt(0).toUpperCase()}${fieldName.slice(1)}`;
   const url = `${baseUrl}/${token}/${endpoint}`;
   try {
-    const resp = await fetch(url, { method: "POST", body: form });
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: client.getRequestHeaders(),
+      body: form,
+    });
     if (!resp.ok) {
       let errBody = "";
       try { errBody = await resp.text(); } catch {}
