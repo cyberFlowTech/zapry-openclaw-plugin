@@ -11,6 +11,7 @@ import type { ResolvedZapryAccount } from "./types.js";
 import { syncProfileToZapry } from "./profile-sync.js";
 
 const IS_STANDARD_CHAT_ID = /^[gup]_\d+$/;
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 60_000;
 
 function isProfileSyncEnabled(ctx: any, accountId: string): boolean {
   const zapryCfg = ctx?.cfg?.channels?.zapry;
@@ -244,6 +245,15 @@ export const zapryPlugin = {
       client.setMyPresence(true).catch(() => {});
       ctx.log?.info(`[${account.accountId}] presence set to online`);
 
+      const presenceHeartbeat = setInterval(() => {
+        client.setMyPresence(true).catch((err) => {
+          ctx.log?.debug?.(
+            `[${account.accountId}] presence heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }, PRESENCE_HEARTBEAT_INTERVAL_MS);
+      presenceHeartbeat.unref?.();
+
       const profileSyncEnabled = isProfileSyncEnabled(ctx, account.accountId);
       if (profileSyncEnabled) {
         const projectRoot =
@@ -258,9 +268,10 @@ export const zapryPlugin = {
       }
 
       ctx.abortSignal?.addEventListener("abort", () => {
+        clearInterval(presenceHeartbeat);
         client.setMyPresence(false).catch(() => {});
         ctx.log?.info(`[${account.accountId}] presence set to offline`);
-      });
+      }, { once: true });
 
       const effectiveRuntime = ctx.channelRuntime
         ? { ...ctx.runtime, channel: ctx.channelRuntime }
