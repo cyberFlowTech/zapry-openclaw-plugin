@@ -9,6 +9,14 @@ function getZapryConfig(cfg: any): ZapryChannelConfig | undefined {
   return cfg?.channels?.zapry;
 }
 
+function normalizeZapryApiBase(raw: string | undefined): string {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return DEFAULT_API_BASE_URL;
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  const normalized = withoutTrailingSlash.replace(/\/bot$/i, "");
+  return normalized || DEFAULT_API_BASE_URL;
+}
+
 export function listZapryAccountIds(cfg: any): string[] {
   const zapry = getZapryConfig(cfg);
   if (!zapry) return [];
@@ -37,7 +45,7 @@ export function resolveZapryAccount(
       botToken: acct.botToken ?? "",
       tokenSource: "config",
       config: {
-        apiBaseUrl: acct.apiBaseUrl ?? zapry.apiBaseUrl ?? DEFAULT_API_BASE_URL,
+        apiBaseUrl: normalizeZapryApiBase(acct.apiBaseUrl ?? zapry.apiBaseUrl ?? DEFAULT_API_BASE_URL),
         mode: acct.mode ?? zapry.mode ?? "polling",
         webhookUrl: acct.webhookUrl ?? zapry.webhookUrl,
         dm: acct.dm ?? zapry.dm,
@@ -54,7 +62,7 @@ export function resolveZapryAccount(
     botToken: token,
     tokenSource: zapry.botToken ? "config" : "env",
     config: {
-      apiBaseUrl: zapry.apiBaseUrl ?? DEFAULT_API_BASE_URL,
+      apiBaseUrl: normalizeZapryApiBase(zapry.apiBaseUrl ?? DEFAULT_API_BASE_URL),
       mode: zapry.mode ?? "polling",
       webhookUrl: zapry.webhookUrl,
       dm: zapry.dm,
