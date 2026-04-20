@@ -168,8 +168,11 @@ function shouldRegisterZapryOwnerTools(toolCtx: any, account: { botToken: string
   if (toolCtx?.messageChannel !== "zapry") {
     return true;
   }
+  if (toolCtx?.senderIsOwner === true) {
+    return true;
+  }
   // Session/tool snapshots can be built before trusted sender context is attached.
-  // Always register owner-only Zapry tools and enforce permission at execute time.
+  // Only do positive early-allow here; keep execute-time gating as the real guard.
   return true;
 }
 
