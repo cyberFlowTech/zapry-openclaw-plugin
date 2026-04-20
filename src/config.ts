@@ -26,16 +26,26 @@ export function resolveZapryAccount(
   accountId?: string,
 ): ResolvedZapryAccount {
   const zapry = getZapryConfig(cfg) ?? {};
-  const resolvedId = accountId ?? DEFAULT_ACCOUNT_ID;
+  const configuredIds =
+    zapry.accounts && Object.keys(zapry.accounts).length > 0
+      ? Object.keys(zapry.accounts)
+      : [];
+  const resolvedId =
+    accountId ??
+    (configuredIds.length === 1 ? configuredIds[0] : DEFAULT_ACCOUNT_ID);
+
+  const envToken = process.env.ZAPRY_BOT_TOKEN;
+  const fallbackToken = zapry.botToken ?? envToken ?? "";
 
   const acct = zapry.accounts?.[resolvedId];
   if (acct) {
+    const token = acct.botToken ?? fallbackToken;
     return {
       accountId: resolvedId,
       name: acct.name,
       enabled: acct.enabled !== false,
-      botToken: acct.botToken ?? "",
-      tokenSource: "config",
+      botToken: token,
+      tokenSource: acct.botToken ? "config" : (zapry.botToken ? "config" : "env"),
       config: {
         apiBaseUrl: acct.apiBaseUrl ?? zapry.apiBaseUrl ?? DEFAULT_API_BASE_URL,
         mode: acct.mode ?? zapry.mode ?? "polling",
@@ -45,8 +55,7 @@ export function resolveZapryAccount(
     };
   }
 
-  const envToken = process.env.ZAPRY_BOT_TOKEN;
-  const token = zapry.botToken ?? envToken ?? "";
+  const token = fallbackToken;
   return {
     accountId: resolvedId,
     name: undefined,
