@@ -11,7 +11,10 @@ import type { ResolvedZapryAccount } from "./types.js";
 import { syncProfileToZapry } from "./profile-sync.js";
 
 const IS_STANDARD_CHAT_ID = /^[gup]_\d+$/;
-const PRESENCE_HEARTBEAT_INTERVAL_MS = 60_000;
+
+// Zapry 服务端以最近活跃时间 + TTL 判断设备在线，仅启动时调用一次会被很快判定离线，
+// 需要客户端按固定频率续期。30s 是兼顾移动端可见性与后端压力的经验值。
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 30_000;
 
 function isProfileSyncEnabled(ctx: any, accountId: string): boolean {
   const zapryCfg = ctx?.cfg?.channels?.zapry;
@@ -242,17 +245,34 @@ export const zapryPlugin = {
         // probe is best-effort
       }
 
-      client.setMyPresence(true).catch(() => {});
-      ctx.log?.info(`[${account.accountId}] presence set to online`);
-
-      const presenceHeartbeat = setInterval(() => {
-        client.setMyPresence(true).catch((err) => {
-          ctx.log?.debug?.(
-            `[${account.accountId}] presence heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
+      const sendPresence = async (online: boolean): Promise<void> => {
+        try {
+          const resp = await client.setMyPresence(online);
+          if (resp.ok) {
+            ctx.log?.info(`[${account.accountId}] presence set to ${online ? "online" : "offline"}`);
+          } else {
+            ctx.log?.warn(
+              `[${account.accountId}] setMyPresence(${online}) failed: ` +
+                `${resp.error_code ?? "unknown"}:${resp.description ?? "unknown"}`,
+            );
+          }
+        } catch (err) {
+          ctx.log?.warn(
+            `[${account.accountId}] setMyPresence(${online}) error: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
           );
-        });
+        }
+      };
+
+      void sendPresence(true);
+
+      const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
+        if (ctx.abortSignal?.aborted) return;
+        void sendPresence(true);
       }, PRESENCE_HEARTBEAT_INTERVAL_MS);
-      presenceHeartbeat.unref?.();
+      if (typeof (heartbeatTimer as { unref?: () => void }).unref === "function") {
+        (heartbeatTimer as { unref: () => void }).unref();
+      }
 
       const profileSyncEnabled = isProfileSyncEnabled(ctx, account.accountId);
       if (profileSyncEnabled) {
@@ -268,9 +288,8 @@ export const zapryPlugin = {
       }
 
       ctx.abortSignal?.addEventListener("abort", () => {
-        clearInterval(presenceHeartbeat);
-        client.setMyPresence(false).catch(() => {});
-        ctx.log?.info(`[${account.accountId}] presence set to offline`);
+        clearInterval(heartbeatTimer);
+        void sendPresence(false);
       }, { once: true });
 
       const effectiveRuntime = ctx.channelRuntime
