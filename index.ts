@@ -172,9 +172,8 @@ function shouldRegisterZapryOwnerTools(toolCtx: any, account: { botToken: string
 }
 
 function shouldExecuteZapryOwnerTools(toolCtx: any, account: { botToken: string }): boolean {
-  if (toolCtx?.messageChannel !== "zapry") {
-    return true;
-  }
+  // Fail closed: owner-only Zapry tools require trusted sender context even when
+  // the invocation did not originate from a Zapry-tagged message channel.
   return resolveToolSenderIsOwner(toolCtx, account);
 }
 
