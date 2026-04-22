@@ -3173,6 +3173,37 @@ function resolveStorePath(runtime: any, cfg: any, agentId?: string): string | un
   }
 }
 
+function buildPeerSessionKey(agentId: string, peer: { kind: "group" | "direct"; id: string }): string {
+  return `agent:${agentId}:zapry:${peer.kind}:${peer.id}`;
+}
+
+function normalizeRouteSessionKey(route: {
+  agentId: string;
+  accountId: string;
+  sessionKey: string;
+}, peer: { kind: "group" | "direct"; id: string }) {
+  const agentId = `${route.agentId || ""}`.trim() || "main";
+  const sessionKey = `${route.sessionKey || ""}`.trim();
+  if (!sessionKey) {
+    return {
+      ...route,
+      agentId,
+      sessionKey: buildPeerSessionKey(agentId, peer),
+    };
+  }
+
+  const defaultMainSessionKey = `agent:${agentId}:main`;
+  if (sessionKey === "main" || sessionKey === defaultMainSessionKey) {
+    return {
+      ...route,
+      agentId,
+      sessionKey: buildPeerSessionKey(agentId, peer),
+    };
+  }
+
+  return route;
+}
+
 function resolveRoute(params: {
   runtime: any;
   cfg: any;
@@ -3194,7 +3225,7 @@ function resolveRoute(params: {
         typeof route.accountId === "string" &&
         typeof route.sessionKey === "string"
       ) {
-        return route;
+        return normalizeRouteSessionKey(route, params.peer);
       }
     } catch {
       // fall through to local fallback
@@ -3203,7 +3234,7 @@ function resolveRoute(params: {
   return {
     agentId: "main",
     accountId: params.accountId,
-    sessionKey: `agent:main:zapry:${params.peer.kind}:${params.peer.id}`,
+    sessionKey: buildPeerSessionKey("main", params.peer),
   };
 }
 
@@ -3442,15 +3473,20 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     OriginatingTo: `zapry:${parsed.chatId}`,
   };
 
-  const ctxPayload =
+  const finalizedCtxPayload =
     typeof runtime?.channel?.reply?.finalizeInboundContext === "function"
       ? runtime.channel.reply.finalizeInboundContext(inboundCtxBase)
       : inboundCtxBase;
+  const ctxPayload = {
+    ...finalizedCtxPayload,
+    SessionKey: route.sessionKey,
+    sessionKey: route.sessionKey,
+  };
 
   if (typeof runtime?.channel?.session?.recordInboundSession === "function" && storePath) {
     await runtime.channel.session.recordInboundSession({
       storePath,
-      sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
+      sessionKey: (ctxPayload as any).sessionKey ?? ctxPayload.SessionKey ?? route.sessionKey,
       ctx: ctxPayload,
       onRecordError: (err: unknown) => {
         log?.warn?.(`[${account.accountId}] zapry session meta update failed: ${String(err)}`);
@@ -3466,7 +3502,7 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   await runWithZaprySkillInvocationContext({
     senderId: String(ctxPayload.SenderId ?? parsed.senderId ?? "").trim(),
     messageSid: String(ctxPayload.MessageSid ?? parsed.messageSid ?? "").trim(),
-    sessionKey: String(ctxPayload.SessionKey ?? route.sessionKey ?? "").trim(),
+    sessionKey: String((ctxPayload as any).sessionKey ?? ctxPayload.SessionKey ?? route.sessionKey ?? "").trim(),
     accountId: account.accountId,
     chatId: parsed.chatId,
   }, async () => {
