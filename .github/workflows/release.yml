@@ -24,6 +24,10 @@ jobs:
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
+      # OIDC Trusted Publishing 需要 npm >= 11.5.1；setup-node 默认附带的 npm 较旧。
+      - name: Upgrade npm (OIDC trusted publishing requires npm >= 11.5)
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
@@ -41,10 +45,10 @@ jobs:
       - name: Build (tsc)
         run: npm run build
 
-      - name: Publish to npm (with provenance)
+      # 不设置 NODE_AUTH_TOKEN：npm 会自动通过 GitHub OIDC 与 npm registry 交换短期凭证，
+      # 要求 npmjs.com 的包页面里已把当前仓库配为 Trusted Publisher。
+      - name: Publish to npm (OIDC + provenance)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
