@@ -30,6 +30,34 @@ The npm package name is `zapry-openclaw-plugin`, while the OpenClaw plugin/chann
 git rm -r --cached node_modules
 ```
 
+## Release
+
+发版通过 GitHub Actions 自动完成，不需要本地 `npm publish`。
+
+1. 在 `main` 上 bump 版本并更新 CHANGELOG：
+
+   ```bash
+   # 编辑 package.json 的 "version" 字段，编辑 CHANGELOG.md
+   git add package.json CHANGELOG.md
+   git commit -m "chore(plugin): 准备 X.Y.Z 生产发版"
+   git push origin main
+   ```
+
+2. 打 tag 并推送，触发自动发版：
+
+   ```bash
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+3. `.github/workflows/release.yml` 会自动：
+   - 校验 tag 与 `package.json` 版本一致
+   - `npm ci && npm run build`
+   - `npm publish --provenance --access public`
+   - 基于 commit 自动生成 GitHub Release
+
+首次使用需在 GitHub → Settings → Secrets and variables → Actions 配置一个 `NPM_TOKEN`（npm Automation Token，需有 `zapry-openclaw-plugin` 的 publish 权限）。
+
 ## Configure
 
 Get a bot token from Zapry BotMother, then add it to your config:
