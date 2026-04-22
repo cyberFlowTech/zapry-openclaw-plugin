@@ -4,7 +4,15 @@
 
 ## [Unreleased]
 
-下一次发版计划为 **0.1.0**（里程碑版本）。待补充变更记录。
+## [0.1.0] - 2026-04-22
+
+### Added
+- 新增 `CHANGELOG.md`，按 Keep a Changelog 规范维护历史变更。
+- GitHub Actions CI 流水线（`.github/workflows/ci.yml`）：push/PR 到 `main` 时自动跑 tsc build 验证。
+- GitHub Actions Release 流水线（`.github/workflows/release.yml`）：push tag `v*.*.*` 时自动发布到 npm（带 provenance）并创建 GitHub Release；发版前校验 tag 与 `package.json` 版本号一致。
+
+### Changed
+- 发版流程规范化：从"本地手动 `npm publish`"迁移到"bump 版本 + 推送 tag → 流水线自动发版"。
 
 ## [0.0.4] - 2026-04-22
 
@@ -35,7 +43,8 @@
 - 首个可发布版本，包名更正为 `zapry-openclaw-plugin`。
 - Zapry channel 基础能力：消息收发、群管理、动态 / 俱乐部、bot 自管理、技能同步。
 
-[Unreleased]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.4...v0.1.0
 [0.0.4]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.1...v0.0.2
