@@ -2,6 +2,10 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+下一次发版计划为 **0.1.0**（里程碑版本）。待补充变更记录。
+
 ## [0.0.4] - 2026-04-22
 
 ### Added
@@ -31,6 +35,7 @@
 - 首个可发布版本，包名更正为 `zapry-openclaw-plugin`。
 - Zapry channel 基础能力：消息收发、群管理、动态 / 俱乐部、bot 自管理、技能同步。
 
+[Unreleased]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.4...HEAD
 [0.0.4]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.1...v0.0.2
