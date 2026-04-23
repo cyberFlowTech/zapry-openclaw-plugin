@@ -40,8 +40,10 @@ import {
   resolveZaprySkillRequestHeaders,
   setZapryRuntime,
 } from "./src/runtime.js";
-import { resolveZapryAccount } from "./src/config.js";
+import { resolveDefaultZapryAccountId, resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
+import { readFile } from "node:fs/promises";
+import { join as joinPath } from "node:path";
 
 const ZAPRY_ACTION_TOOL_ACTIONS = [
   "send", "send-message",
@@ -76,6 +78,40 @@ async function resolveRuntimeConfig(api: any): Promise<any> {
   return runtimeConfig ?? {};
 }
 
+function parseAgentIdFromSessionKey(sessionKey: string | undefined): string | undefined {
+  const value = `${sessionKey || ""}`.trim();
+  const match = /^agent:([^:]+):/.exec(value);
+  return match?.[1]?.trim() || undefined;
+}
+
+async function resolveSessionAccountId(api: any, cfg: any, sessionKey: string | undefined): Promise<string | undefined> {
+  const key = `${sessionKey || ""}`.trim();
+  if (!key) return undefined;
+
+  const agentId = parseAgentIdFromSessionKey(key);
+  if (!agentId) return undefined;
+
+  const stateDir = api?.runtime?.state?.resolveStateDir?.(process.env);
+  if (!stateDir) return undefined;
+
+  const storePath = joinPath(stateDir, "agents", agentId, "sessions", "sessions.json");
+  try {
+    const raw = await readFile(storePath, "utf8");
+    const store = JSON.parse(raw);
+    const entry = store?.[key];
+    const accountId =
+      (typeof entry?.deliveryContext?.accountId === "string" && entry.deliveryContext.accountId.trim()) ||
+      (typeof entry?.lastAccountId === "string" && entry.lastAccountId.trim()) ||
+      undefined;
+    if (accountId) return accountId;
+  } catch {
+    // fall back to config-based resolution below
+  }
+
+  const fallback = resolveDefaultZapryAccountId(cfg);
+  return fallback?.trim() ? fallback : undefined;
+}
+
 function sameUserIdentity(left: string, right: string): boolean {
   const normalizedLeft = left.trim();
   const normalizedRight = right.trim();
@@ -101,7 +137,10 @@ function resolveOwnerIdFromBotToken(botToken: string): string {
 }
 
 function resolveToolAccount(toolCtx: any, cfg: any, requestedAccountId?: string) {
-  return resolveZapryAccount(cfg, requestedAccountId ?? toolCtx?.agentAccountId);
+  return resolveZapryAccount(
+    cfg,
+    requestedAccountId ?? toolCtx?.agentAccountId ?? resolveDefaultZapryAccountId(cfg),
+  );
 }
 
 function resolveToolSenderId(toolCtx: any): string {
@@ -117,22 +156,24 @@ function resolveToolSenderIsOwner(toolCtx: any, account: { botToken: string }): 
   if (toolCtx?.senderIsOwner === true) {
     return true;
   }
-  if (toolCtx?.senderIsOwner === false) {
-    return false;
-  }
-  const senderId = resolveToolSenderId(toolCtx);
-  const ownerId = resolveOwnerIdFromBotToken(account.botToken);
-  return sameUserIdentity(senderId, ownerId);
-}
-
-function shouldExposeZapryOwnerTools(toolCtx: any, account: { botToken: string }): boolean {
-  if (toolCtx?.messageChannel !== "zapry") {
-    return true;
-  }
   const senderId = resolveToolSenderId(toolCtx);
   if (!senderId) {
     return false;
   }
+  const ownerId = resolveOwnerIdFromBotToken(account.botToken);
+  return sameUserIdentity(senderId, ownerId);
+}
+
+function shouldRegisterZapryOwnerTools(toolCtx: any, account: { botToken: string }): boolean {
+  // Session/tool snapshots can be built before trusted sender context is attached,
+  // so register-time owner filtering can hide tools from the real owner. Always
+  // register Zapry tools here and rely on execute-time permission checks instead.
+  return true;
+}
+
+function shouldExecuteZapryOwnerTools(toolCtx: any, account: { botToken: string }): boolean {
+  // Fail closed: owner-only Zapry tools require trusted sender context even when
+  // the invocation did not originate from a Zapry-tagged message channel.
   return resolveToolSenderIsOwner(toolCtx, account);
 }
 
@@ -167,11 +208,30 @@ const plugin = {
   register(api: any) {
     setZapryRuntime(api.runtime);
     api.registerChannel({ plugin: zapryPlugin });
+    api.on("before_tool_call", async (event: any, ctx: any) => {
+      if (event?.toolName !== "zapry_post" && event?.toolName !== "zapry_action") {
+        return;
+      }
+      if (typeof event?.params?.accountId === "string" && event.params.accountId.trim()) {
+        return;
+      }
+      const cfg = await resolveRuntimeConfig(api);
+      const sessionAccountId = await resolveSessionAccountId(api, cfg, ctx?.sessionKey);
+      if (!sessionAccountId) {
+        return;
+      }
+      return {
+        params: {
+          ...(event?.params || {}),
+          accountId: sessionAccountId,
+        },
+      };
+    });
 
     api.registerTool((toolCtx: any) => {
       const toolCfg = toolCtx?.config ?? api?.runtime?.config ?? {};
       const account = resolveToolAccount(toolCtx, toolCfg);
-      if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+      if (!shouldRegisterZapryOwnerTools(toolCtx, account)) {
         return null;
       }
       return {
@@ -183,6 +243,10 @@ const plugin = {
         parameters: {
           type: "object" as const,
           properties: {
+            accountId: {
+              type: "string" as const,
+              description: "Optional Zapry account id. If omitted and only one account is configured, that account is used.",
+            },
             content: {
               type: "string" as const,
               description: "Post text content (required)",
@@ -199,8 +263,12 @@ const plugin = {
         execute: async (_toolCallId: string, args: Record<string, any>) => {
           try {
             const cfg = await resolveRuntimeConfig(api);
-            const account = resolveToolAccount(toolCtx, cfg);
-            if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+            const reqAccountId =
+              typeof args?.accountId === "string" && args.accountId.trim()
+                ? args.accountId.trim()
+                : undefined;
+            const account = resolveToolAccount(toolCtx, cfg, reqAccountId);
+            if (!shouldExecuteZapryOwnerTools(toolCtx, account)) {
               return ownerDeniedToolResult();
             }
             const result = await handleZapryAction({
@@ -224,7 +292,7 @@ const plugin = {
     api.registerTool((toolCtx: any) => {
       const toolCfg = toolCtx?.config ?? api?.runtime?.config ?? {};
       const account = resolveToolAccount(toolCtx, toolCfg);
-      if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+      if (!shouldRegisterZapryOwnerTools(toolCtx, account)) {
         return null;
       }
       return {
@@ -250,6 +318,10 @@ const plugin = {
               type: "string" as const,
               description: "The Zapry action to execute",
               enum: [...ZAPRY_ACTION_TOOL_ACTIONS],
+            },
+            accountId: {
+              type: "string" as const,
+              description: "Optional Zapry account id. If omitted and only one account is configured, that account is used.",
             },
             chat_id: {
               type: "string" as const,
@@ -324,7 +396,7 @@ const plugin = {
             const { action, channel: _ch, accountId: reqAccountId, ...params } = args ?? {};
             const cfg = await resolveRuntimeConfig(api);
             const account = resolveToolAccount(toolCtx, cfg, reqAccountId);
-            if (!shouldExposeZapryOwnerTools(toolCtx, account)) {
+            if (!shouldExecuteZapryOwnerTools(toolCtx, account)) {
               return ownerDeniedToolResult();
             }
             const result = await handleZapryAction({

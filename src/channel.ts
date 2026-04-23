@@ -290,7 +290,7 @@ export const zapryPlugin = {
       ctx.abortSignal?.addEventListener("abort", () => {
         clearInterval(heartbeatTimer);
         void sendPresence(false);
-      });
+      }, { once: true });
 
       const effectiveRuntime = ctx.channelRuntime
         ? { ...ctx.runtime, channel: ctx.channelRuntime }

@@ -1409,9 +1409,7 @@ function pickFirst(obj: Record<string, any>, keys: string[]): any {
 }
 
 function normalizeChatId(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .replace(/^chat:/i, "");
+  return stripZapryTargetPrefix(String(value ?? "").trim());
 }
 
 function toNumberIfPossible(value: unknown): any {
@@ -1708,14 +1706,18 @@ function resolveGroupRecord(payload: unknown, chatId: string): Record<string, un
 }
 
 function normalizeResultChatId(value: unknown): string {
-  const normalized = String(value ?? "").trim();
+  const normalized = stripZapryTargetPrefix(String(value ?? "").trim());
   if (!normalized) {
     return "";
   }
   if (normalized.startsWith("g_")) {
     return normalized;
   }
-  return normalized.startsWith("chat:") ? normalized.slice(5) : normalized;
+  return normalized;
+}
+
+function stripZapryTargetPrefix(value: string): string {
+  return value.replace(/^(?:chat:|zapry:(?:group:)*)/i, "");
 }
 
 function asObjectRecord(value: unknown): Record<string, unknown> | null {
