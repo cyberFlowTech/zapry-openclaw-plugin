@@ -149,3 +149,79 @@ export function isOwnerInvocation(params: {
   const ownerId = resolveOwnerIdFromBotToken(params.botToken);
   return sameUserIdentity(senderId, ownerId);
 }
+
+// ── Session accountId resolution ─────────────────────────────────────────────
+//
+// These helpers back the `before_tool_call` hook in index.ts. They are pure so
+// that we can unit-test every decision branch without touching disk, and so
+// that we can rigorously prove the multi-account safety property (no silent
+// cross-account delivery when the session context is ambiguous).
+
+/**
+ * Shape of a single entry in `<stateDir>/agents/<agentId>/sessions/sessions.json`
+ * as produced by the OpenClaw runtime's `recordInboundSession`. We only care
+ * about the account-routing fields here; the entry will generally carry many
+ * more keys (lastChannel, lastTo, deliveryContext.channel, ...).
+ */
+export type SessionStoreEntry = {
+  deliveryContext?: { accountId?: string } & Record<string, unknown>;
+  lastAccountId?: string;
+  [key: string]: unknown;
+};
+
+export type SessionStore = Record<string, SessionStoreEntry | undefined>;
+
+/**
+ * Extract the accountId most recently bound to a session.
+ * Prefers `deliveryContext.accountId` (explicitly set by inbound) over
+ * `lastAccountId` (legacy / secondary). Returns undefined for a missing or
+ * empty value so callers can fall through to their own fallback.
+ */
+export function extractAccountIdFromSessionEntry(
+  entry: SessionStoreEntry | undefined | null,
+): string | undefined {
+  if (!entry) return undefined;
+  const deliveryAccountId =
+    typeof entry.deliveryContext?.accountId === "string"
+      ? entry.deliveryContext.accountId.trim()
+      : "";
+  if (deliveryAccountId) return deliveryAccountId;
+  const lastAccountId =
+    typeof entry.lastAccountId === "string" ? entry.lastAccountId.trim() : "";
+  return lastAccountId || undefined;
+}
+
+/**
+ * Decide which accountId to auto-inject into a tool invocation when the
+ * caller has not specified one explicitly.
+ *
+ * Precedence:
+ *   1. Use the accountId recorded for the exact sessionKey — this is the
+ *      source-of-truth once the inbound pipeline has committed the session.
+ *   2. When the deployment has exactly ONE configured account, silently fall
+ *      back to it. There is literally no other account to mis-target, so this
+ *      is safe.
+ *   3. Otherwise return undefined.
+ *
+ *      We INTENTIONALLY refuse to default to `Object.keys(accounts)[0]` in
+ *      multi-account deployments, because doing so silently routes the call
+ *      to whichever account happens to come first — a well-known cross-
+ *      account leak pattern (see OpenClaw Discord issue #15418, #8154).
+ *      Returning undefined pushes the decision back to the caller, which
+ *      will either surface a clearer error or prompt the agent to pass
+ *      `accountId` explicitly.
+ */
+export function resolveSessionAccountIdFromStore(params: {
+  store: SessionStore | null | undefined;
+  sessionKey: string;
+  configuredAccountIds: readonly string[];
+}): string | undefined {
+  const fromEntry = extractAccountIdFromSessionEntry(
+    params.store?.[params.sessionKey],
+  );
+  if (fromEntry) return fromEntry;
+  if (params.configuredAccountIds.length === 1) {
+    return params.configuredAccountIds[0];
+  }
+  return undefined;
+}

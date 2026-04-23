@@ -40,11 +40,17 @@ import {
   resolveZaprySkillRequestHeaders,
   setZapryRuntime,
 } from "./src/runtime.js";
-import { resolveDefaultZapryAccountId, resolveZapryAccount } from "./src/config.js";
+import {
+  listZapryAccountIds,
+  resolveDefaultZapryAccountId,
+  resolveZapryAccount,
+} from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
 import {
   isOwnerInvocation,
   parseAgentIdFromSessionKey,
+  resolveSessionAccountIdFromStore,
+  type SessionStore,
 } from "./src/internal.js";
 import { readFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
@@ -82,7 +88,22 @@ async function resolveRuntimeConfig(api: any): Promise<any> {
   return runtimeConfig ?? {};
 }
 
-async function resolveSessionAccountId(api: any, cfg: any, sessionKey: string | undefined): Promise<string | undefined> {
+async function loadSessionStore(storePath: string): Promise<SessionStore | null> {
+  try {
+    const raw = await readFile(storePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return (parsed ?? null) as SessionStore | null;
+  } catch {
+    // file missing, unreadable or malformed JSON → treat as "no store"
+    return null;
+  }
+}
+
+async function resolveSessionAccountId(
+  api: any,
+  cfg: any,
+  sessionKey: string | undefined,
+): Promise<string | undefined> {
   const key = `${sessionKey || ""}`.trim();
   if (!key) return undefined;
 
@@ -92,22 +113,20 @@ async function resolveSessionAccountId(api: any, cfg: any, sessionKey: string | 
   const stateDir = api?.runtime?.state?.resolveStateDir?.(process.env);
   if (!stateDir) return undefined;
 
-  const storePath = joinPath(stateDir, "agents", agentId, "sessions", "sessions.json");
-  try {
-    const raw = await readFile(storePath, "utf8");
-    const store = JSON.parse(raw);
-    const entry = store?.[key];
-    const accountId =
-      (typeof entry?.deliveryContext?.accountId === "string" && entry.deliveryContext.accountId.trim()) ||
-      (typeof entry?.lastAccountId === "string" && entry.lastAccountId.trim()) ||
-      undefined;
-    if (accountId) return accountId;
-  } catch {
-    // fall back to config-based resolution below
-  }
+  const storePath = joinPath(
+    stateDir,
+    "agents",
+    agentId,
+    "sessions",
+    "sessions.json",
+  );
+  const store = await loadSessionStore(storePath);
 
-  const fallback = resolveDefaultZapryAccountId(cfg);
-  return fallback?.trim() ? fallback : undefined;
+  return resolveSessionAccountIdFromStore({
+    store,
+    sessionKey: key,
+    configuredAccountIds: listZapryAccountIds(cfg),
+  });
 }
 
 function resolveToolAccount(toolCtx: any, cfg: any, requestedAccountId?: string) {
