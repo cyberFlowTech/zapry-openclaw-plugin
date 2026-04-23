@@ -156,23 +156,13 @@ describe("listZapryAccountIds / resolveDefaultZapryAccountId", () => {
     ]);
   });
 
-  it("returns [] for an empty config even when ZAPRY_BOT_TOKEN env is set (current behaviour)", () => {
-    // ⚠️ KNOWN BUG — `listZapryAccountIds` returns [] whenever `cfg.channels.zapry`
-    // is missing, even though `resolveZapryAccount({})` still yields a usable
-    // account backed by the env token. Consumers that use this function to
-    // decide "is the Zapry plugin configured?" will incorrectly classify an
-    // env-only deployment as unconfigured.
-    //
-    // Fix (proposed, left for a follow-up PR):
-    //   const zapry = getZapryConfig(cfg) ?? {};
-    //   ...then fall through to the botToken / env-token checks below.
+  it("returns [DEFAULT_ACCOUNT_ID] when only ZAPRY_BOT_TOKEN env is set (no channels.zapry block)", () => {
+    // Regression guard for the env-only deployment path: consumers rely on
+    // this function to decide whether the plugin is configured, and must see
+    // the env-token backed account.
     process.env.ZAPRY_BOT_TOKEN = "env-only";
-    expect(listZapryAccountIds({})).toEqual([]);
+    expect(listZapryAccountIds({})).toEqual([DEFAULT_ACCOUNT_ID]);
   });
-
-  it.todo(
-    "SHOULD return [DEFAULT_ACCOUNT_ID] when only ZAPRY_BOT_TOKEN env is set (tracked bug)",
-  );
 
   it("returns [DEFAULT_ACCOUNT_ID] when env is set and a (possibly empty) zapry block exists", () => {
     process.env.ZAPRY_BOT_TOKEN = "env-only";
