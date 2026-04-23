@@ -1,9 +1,19 @@
 name: Release
 
+# 仅允许在 GitHub Actions 页面手动触发。
+# 禁止 push / tag 自动触发发版，防止误操作。
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本号（不含 v 前缀，必须与 package.json 的 version 完全一致，例如 0.1.2）'
+        required: true
+        type: string
+      dry_run:
+        description: '干跑模式：只跑 build + npm publish --dry-run，不打 tag、不上 npm、不建 Release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -16,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,34 +36,69 @@ jobs:
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Verify input version matches package.json
+        run: |
+          set -e
+          INPUT_VERSION="${{ inputs.version }}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$INPUT_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::输入版本号 ($INPUT_VERSION) 与 package.json ($PKG_VERSION) 不一致，拒绝发版"
+            exit 1
+          fi
+          echo "✓ version v$PKG_VERSION confirmed"
+
+      - name: Check tag does not already exist
+        run: |
+          set -e
+          TAG="v${{ inputs.version }}"
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG 已经存在于远程，请先升级 package.json 的版本号"
+            exit 1
+          fi
+          echo "✓ tag $TAG 可用"
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify tag matches package.json version
-        run: |
-          set -e
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::tag ($TAG_VERSION) 与 package.json ($PKG_VERSION) 不一致，拒绝发版"
-            exit 1
-          fi
-          echo "✓ tag v$PKG_VERSION matches package.json"
-
       - name: Build (tsc)
         run: npm run build
+
+      - name: Verify build output
+        run: |
+          set -e
+          test -f dist/index.js || { echo "::error::dist/index.js missing"; exit 1; }
+          test -f dist/index.d.ts || { echo "::error::dist/index.d.ts missing"; exit 1; }
+          echo "✓ build output looks good"
+
+      # 干跑：不发 npm、不打 tag、不建 Release
+      - name: Dry run publish (skip npm / tag / release)
+        if: ${{ inputs.dry_run }}
+        run: npx -y npm@latest publish --provenance --access public --dry-run
 
       # OIDC Trusted Publishing 需要 npm >= 11.5.1，
       # 直接用 npx 拿最新 npm 跑 publish（避免 `npm install -g npm@latest` 就地升级 npm 自己导致的 promise-retry 故障）。
       # 不设置 NODE_AUTH_TOKEN：npm 会自动通过 GitHub OIDC 与 npm registry 交换短期凭证，
       # 要求 npmjs.com 的包页面已把当前仓库配为 Trusted Publisher。
       - name: Publish to npm (OIDC + provenance)
+        if: ${{ !inputs.dry_run }}
         run: npx -y npm@latest publish --provenance --access public
 
+      - name: Create and push git tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: v${{ inputs.version }}
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
       - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
           generate_release_notes: true
           fail_on_unmatched_files: false

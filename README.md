@@ -32,9 +32,9 @@ git rm -r --cached node_modules
 
 ## Release
 
-发版通过 GitHub Actions 自动完成，不需要本地 `npm publish`。
+发版**只能手动触发**（`workflow_dispatch`），不会因为 push / tag 自动发版。
 
-1. 在 `main` 上 bump 版本并更新 CHANGELOG：
+1. 在 `main` 上 bump 版本并更新 CHANGELOG，然后推上去：
 
    ```bash
    # 编辑 package.json 的 "version" 字段，编辑 CHANGELOG.md
@@ -43,20 +43,20 @@ git rm -r --cached node_modules
    git push origin main
    ```
 
-2. 打 tag 并推送，触发自动发版：
+2. 打开 GitHub → Actions → **Release** workflow → **Run workflow**：
 
-   ```bash
-   git tag -a vX.Y.Z -m "Release vX.Y.Z"
-   git push origin vX.Y.Z
-   ```
+   - **version**：填写 `X.Y.Z`（不要带 `v` 前缀，必须与 `package.json` 中的 `version` 完全一致）
+   - **dry_run**：勾选可干跑（只跑 build + `npm publish --dry-run`，不上 npm、不打 tag、不建 Release）
 
-3. `.github/workflows/release.yml` 会自动：
-   - 校验 tag 与 `package.json` 版本一致
+3. workflow 会自动：
+   - 校验输入版本号与 `package.json` 一致
+   - 校验远程不存在同名 tag
    - `npm ci && npm run build`
-   - `npm publish --provenance --access public`
+   - `npm publish --provenance --access public`（OIDC Trusted Publishing）
+   - 由 workflow 内部创建并推送 `vX.Y.Z` tag
    - 基于 commit 自动生成 GitHub Release
 
-首次使用需在 GitHub → Settings → Secrets and variables → Actions 配置一个 `NPM_TOKEN`（npm Automation Token，需有 `zapry-openclaw-plugin` 的 publish 权限）。
+npm 发布走 npmjs.com 的 Trusted Publisher（OIDC），不需要配置 `NPM_TOKEN`。首次启用请在 npmjs.com 的包设置里把当前仓库配成 Trusted Publisher。
 
 ## Configure
 
