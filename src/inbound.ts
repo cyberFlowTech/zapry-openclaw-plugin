@@ -1,4 +1,5 @@
 import { ZapryApiClient } from "./api-client.js";
+import { buildPeerSessionKey, normalizeRouteSessionKey } from "./internal.js";
 import { getZapryRuntime, runWithZaprySkillInvocationContext } from "./runtime.js";
 import { sendMessageZapry } from "./send.js";
 import type { ResolvedZapryAccount } from "./types.js";
@@ -3171,37 +3172,6 @@ function resolveStorePath(runtime: any, cfg: any, agentId?: string): string | un
   } catch {
     return undefined;
   }
-}
-
-function buildPeerSessionKey(agentId: string, peer: { kind: "group" | "direct"; id: string }): string {
-  return `agent:${agentId}:zapry:${peer.kind}:${peer.id}`;
-}
-
-function normalizeRouteSessionKey(route: {
-  agentId: string;
-  accountId: string;
-  sessionKey: string;
-}, peer: { kind: "group" | "direct"; id: string }) {
-  const agentId = `${route.agentId || ""}`.trim() || "main";
-  const sessionKey = `${route.sessionKey || ""}`.trim();
-  if (!sessionKey) {
-    return {
-      ...route,
-      agentId,
-      sessionKey: buildPeerSessionKey(agentId, peer),
-    };
-  }
-
-  const defaultMainSessionKey = `agent:${agentId}:main`;
-  if (sessionKey === "main" || sessionKey === defaultMainSessionKey) {
-    return {
-      ...route,
-      agentId,
-      sessionKey: buildPeerSessionKey(agentId, peer),
-    };
-  }
-
-  return route;
 }
 
 function resolveRoute(params: {

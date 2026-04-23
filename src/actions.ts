@@ -1,4 +1,5 @@
 import { ZapryApiClient } from "./api-client.js";
+import { stripZapryTargetPrefix } from "./internal.js";
 import type { ResolvedZapryAccount } from "./types.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -1706,18 +1707,7 @@ function resolveGroupRecord(payload: unknown, chatId: string): Record<string, un
 }
 
 function normalizeResultChatId(value: unknown): string {
-  const normalized = stripZapryTargetPrefix(String(value ?? "").trim());
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.startsWith("g_")) {
-    return normalized;
-  }
-  return normalized;
-}
-
-function stripZapryTargetPrefix(value: string): string {
-  return value.replace(/^(?:chat:|zapry:(?:group:)*)/i, "");
+  return stripZapryTargetPrefix(String(value ?? "").trim());
 }
 
 function asObjectRecord(value: unknown): Record<string, unknown> | null {

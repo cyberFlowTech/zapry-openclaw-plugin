@@ -42,6 +42,10 @@ import {
 } from "./src/runtime.js";
 import { resolveDefaultZapryAccountId, resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
+import {
+  isOwnerInvocation,
+  parseAgentIdFromSessionKey,
+} from "./src/internal.js";
 import { readFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
@@ -78,12 +82,6 @@ async function resolveRuntimeConfig(api: any): Promise<any> {
   return runtimeConfig ?? {};
 }
 
-function parseAgentIdFromSessionKey(sessionKey: string | undefined): string | undefined {
-  const value = `${sessionKey || ""}`.trim();
-  const match = /^agent:([^:]+):/.exec(value);
-  return match?.[1]?.trim() || undefined;
-}
-
 async function resolveSessionAccountId(api: any, cfg: any, sessionKey: string | undefined): Promise<string | undefined> {
   const key = `${sessionKey || ""}`.trim();
   if (!key) return undefined;
@@ -112,30 +110,6 @@ async function resolveSessionAccountId(api: any, cfg: any, sessionKey: string | 
   return fallback?.trim() ? fallback : undefined;
 }
 
-function sameUserIdentity(left: string, right: string): boolean {
-  const normalizedLeft = left.trim();
-  const normalizedRight = right.trim();
-  if (!normalizedLeft || !normalizedRight) {
-    return false;
-  }
-  if (normalizedLeft === normalizedRight) {
-    return true;
-  }
-
-  const leftNum = Number(normalizedLeft);
-  const rightNum = Number(normalizedRight);
-  return Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum === rightNum;
-}
-
-function resolveOwnerIdFromBotToken(botToken: string): string {
-  const trimmed = String(botToken ?? "").trim();
-  const separatorIdx = trimmed.indexOf(":");
-  if (separatorIdx <= 0) {
-    return "";
-  }
-  return trimmed.slice(0, separatorIdx).trim();
-}
-
 function resolveToolAccount(toolCtx: any, cfg: any, requestedAccountId?: string) {
   return resolveZapryAccount(
     cfg,
@@ -153,15 +127,11 @@ function resolveToolSenderId(toolCtx: any): string {
 }
 
 function resolveToolSenderIsOwner(toolCtx: any, account: { botToken: string }): boolean {
-  if (toolCtx?.senderIsOwner === true) {
-    return true;
-  }
-  const senderId = resolveToolSenderId(toolCtx);
-  if (!senderId) {
-    return false;
-  }
-  const ownerId = resolveOwnerIdFromBotToken(account.botToken);
-  return sameUserIdentity(senderId, ownerId);
+  return isOwnerInvocation({
+    senderIsOwner: toolCtx?.senderIsOwner,
+    senderId: resolveToolSenderId(toolCtx),
+    botToken: account.botToken,
+  });
 }
 
 function shouldRegisterZapryOwnerTools(toolCtx: any, account: { botToken: string }): boolean {
