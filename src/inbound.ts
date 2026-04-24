@@ -206,34 +206,6 @@ function resolveOwnerIdFromBotToken(botToken: string | undefined): string {
   return trimmed.slice(0, separatorIdx).trim();
 }
 
-function buildNonOwnerSkillReplyGuidance(senderIsOwner: boolean): string {
-  if (senderIsOwner) {
-    return [
-      "权限规则：当前发起消息的人就是这个机器人的主人。",
-      "如果用户要求你调用 owner-only 的 Zapry 平台能力，例如查询好友列表、查询好友申请、发帖、改名、加好友、群管理、Webhook、资料或技能设置等，你可以正常调用 `zapry_action` 或 `zapry_post`。",
-      "不要因为本群上一轮对非 owner 的拒绝历史，就误判当前 owner 请求。",
-    ].join("\n");
-  }
-  return [
-    "权限规则：当前发起消息的人不是这个机器人的主人。",
-    "如果用户要求你调用任何 Zapry 平台能力，例如查询好友列表、查询群/聊天记录、发帖、改名、加好友、群管理、Webhook、资料或技能设置等，你禁止调用 `zapry_action` 或 `zapry_post`。",
-    "遇到这类请求时，你必须直接回复且只回复：只能是主人才可以调用",
-    "普通闲聊、解释说明、媒体内容理解仍然可以正常回答。",
-  ].join("\n");
-}
-
-function appendGuidanceBlock(body: string, guidance: string): string {
-  const normalizedBody = body.trim();
-  const normalizedGuidance = guidance.trim();
-  if (!normalizedGuidance) {
-    return normalizedBody;
-  }
-  if (!normalizedBody) {
-    return normalizedGuidance;
-  }
-  return `${normalizedBody}\n\n${normalizedGuidance}`;
-}
-
 function parseTimestampMs(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     // Zapry/Telegram-like payloads usually use second-level timestamps.
@@ -3324,7 +3296,6 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
   const cfg = resolveConfig(params.cfg, runtime);
   const botOwnerId = resolveOwnerIdFromBotToken(account.botToken);
   const senderIsOwner = sameUserIdentity(parsed.senderId, botOwnerId);
-  const nonOwnerSkillGuidance = buildNonOwnerSkillReplyGuidance(senderIsOwner);
   const contextMediaItems = buildContextMediaItems(parsed.recentContext, parsed.enrichedReply, parsed.mediaItems);
   const allMediaItems = [...parsed.mediaItems, ...contextMediaItems];
   const resolvedMediaItems = await enrichInboundMediaItems(account, allMediaItems, log);
@@ -3341,17 +3312,16 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     parsed.recentContext,
     parsed.enrichedReply,
   );
-  const bodyForAgent = appendGuidanceBlock(rawBody, nonOwnerSkillGuidance);
+  const bodyForAgent = rawBody;
   if (!bodyForAgent) {
     return false;
   }
-  const commandBodyBase = resolveCommandBody(
+  const commandBody = resolveCommandBody(
     parsed.sourceText,
     mediaItems,
     transcript,
     parsed.targetUserHints,
   );
-  const commandBody = appendGuidanceBlock(commandBodyBase, nonOwnerSkillGuidance);
   const stagedMedia = mediaItems.flatMap((item) =>
     item.stagedPath
       ? [
