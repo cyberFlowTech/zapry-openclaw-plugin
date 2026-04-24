@@ -149,3 +149,63 @@ export function isOwnerInvocation(params: {
   const ownerId = resolveOwnerIdFromBotToken(params.botToken);
   return sameUserIdentity(senderId, ownerId);
 }
+
+const NON_OWNER_ALLOWED_ZAPRY_ACTIONS = new Set([
+  "send",
+  "send-message",
+  "send-photo",
+  "send-video",
+  "send-document",
+  "send-audio",
+  "send-voice",
+  "send-animation",
+  "generate-audio",
+  "get-file",
+]);
+
+const ZAPRY_ACTION_PERMISSION_ALIASES: Record<string, string> = {
+  sendmessage: "send-message",
+  sendphoto: "send-photo",
+  sendvideo: "send-video",
+  senddocument: "send-document",
+  sendaudio: "send-audio",
+  sendvoice: "send-voice",
+  sendanimation: "send-animation",
+  generateaudio: "generate-audio",
+  renderaudio: "generate-audio",
+  ttsaudio: "generate-audio",
+  getfile: "get-file",
+};
+
+export function normalizeZapryActionForPermission(action: string | undefined): string {
+  const raw = `${action || ""}`.trim();
+  if (!raw) return "";
+  const lower = raw.toLowerCase();
+  const hyphen = lower.replace(/[\s_]+/g, "-");
+  const compact = lower.replace(/[^a-z0-9]/g, "");
+  return ZAPRY_ACTION_PERMISSION_ALIASES[lower]
+    ?? ZAPRY_ACTION_PERMISSION_ALIASES[hyphen]
+    ?? ZAPRY_ACTION_PERMISSION_ALIASES[compact]
+    ?? hyphen;
+}
+
+export function canNonOwnerExecuteZapryAction(params: {
+  action: string | undefined;
+  requestedChatId?: string;
+  invocationChatId?: string;
+}): boolean {
+  const action = normalizeZapryActionForPermission(params.action);
+  if (!NON_OWNER_ALLOWED_ZAPRY_ACTIONS.has(action)) {
+    return false;
+  }
+  if (action === "get-file") {
+    return true;
+  }
+
+  const invocationChatId = stripZapryTargetPrefix(`${params.invocationChatId || ""}`.trim());
+  const requestedChatId = stripZapryTargetPrefix(`${params.requestedChatId || ""}`.trim());
+  if (!invocationChatId || !requestedChatId) {
+    return false;
+  }
+  return requestedChatId === invocationChatId;
+}

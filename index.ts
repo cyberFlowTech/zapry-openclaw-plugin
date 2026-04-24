@@ -35,6 +35,13 @@ try {
 
 import { zapryPlugin } from "./src/channel.js";
 import {
+  canNonOwnerExecuteZapryAction,
+  isOwnerInvocation,
+  normalizeZapryActionForPermission,
+  parseAgentIdFromSessionKey,
+  stripZapryTargetPrefix,
+} from "./src/internal.js";
+import {
   buildZaprySkillRequestHeaders,
   getZaprySkillInvocationContext,
   resolveZaprySkillRequestHeaders,
@@ -42,10 +49,6 @@ import {
 } from "./src/runtime.js";
 import { resolveDefaultZapryAccountId, resolveZapryAccount } from "./src/config.js";
 import { handleZapryAction } from "./src/actions.js";
-import {
-  isOwnerInvocation,
-  parseAgentIdFromSessionKey,
-} from "./src/internal.js";
 import { readFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
@@ -147,6 +150,32 @@ function shouldExecuteZapryOwnerTools(toolCtx: any, account: { botToken: string 
   return resolveToolSenderIsOwner(toolCtx, account);
 }
 
+function resolveRequestedZapryChatId(params: Record<string, any>): string {
+  const raw =
+    params?.chat_id ??
+    params?.chatId ??
+    params?.chat ??
+    params?.to ??
+    params?.target ??
+    params?.group ??
+    params?.groupId ??
+    params?.group_id;
+  return stripZapryTargetPrefix(String(raw ?? "").trim());
+}
+
+function shouldExecuteZapryAction(toolCtx: any, account: { botToken: string }, args: Record<string, any>): boolean {
+  if (resolveToolSenderIsOwner(toolCtx, account)) {
+    return true;
+  }
+
+  const invocationCtx = getZaprySkillInvocationContext();
+  return canNonOwnerExecuteZapryAction({
+    action: normalizeZapryActionForPermission(typeof args?.action === "string" ? args.action : ""),
+    requestedChatId: resolveRequestedZapryChatId(args),
+    invocationChatId: invocationCtx?.chatId,
+  });
+}
+
 function resolveToolRequestHeaders(toolCtx: any): Record<string, string> {
   const senderId = resolveToolSenderId(toolCtx);
   if (senderId) {
@@ -238,7 +267,7 @@ const plugin = {
                 ? args.accountId.trim()
                 : undefined;
             const account = resolveToolAccount(toolCtx, cfg, reqAccountId);
-            if (!shouldExecuteZapryOwnerTools(toolCtx, account)) {
+            if (!shouldExecuteZapryAction(toolCtx, account, args ?? {})) {
               return ownerDeniedToolResult();
             }
             const result = await handleZapryAction({

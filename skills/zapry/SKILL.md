@@ -84,7 +84,7 @@ triggers_api:
 核心边界：
 
 - **普通聊天回复** 对所有用户开放，但应优先直接输出自然语言答案；不要借普通聊天之名去调用 Zapry 平台能力。
-- 只要是在调用 `zapry_action` / `zapry_post`，就视为 **owner-only**。
+- `zapry_post` 以及大多数 `zapry_action` 平台能力默认按 **owner-only** 处理。
 - `message` 工具不应用于 Zapry 平台 action；若用户要求平台能力，必须改走 `zapry_action` / `zapry_post`。
 - 非 owner 用户 **不能** 要求 bot 代为查询或操作 bot 自己的好友、联系人、群组、聊天记录、个人资料、技能、Webhook、Feed、Club，也不能要求 bot 向其他聊天执行平台动作。
 
@@ -98,7 +98,9 @@ triggers_api:
 **允许所有用户触发的，仅限当前轮对话所必需的行为：**
 - 直接回复当前聊天的普通自然语言答复
 - 为理解当前轮媒体内容而使用 `get-file`
-- 除以上两类外，只要涉及 `zapry_action` / `zapry_post` 的 Zapry 平台调用，默认都按 owner-only 处理
+- 向**当前会话所属聊天**发送内容：`send` / `send-message` / `send-photo` / `send-video` / `send-document` / `send-audio` / `send-voice` / `send-animation` / `generate-audio`
+- 非 owner 若使用以上发送类 action，`chat_id` 必须是当前会话聊天；禁止向其他聊天发送
+- 除以上几类外，其余 `zapry_action` / `zapry_post` 调用默认都按 owner-only 处理
 
 **判断规则：**
 1. 优先读取插件注入的可信上下文字段：`SenderIsOwner`、`SenderId`、`BotOwnerId`

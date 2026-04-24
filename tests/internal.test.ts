@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPeerSessionKey,
+  canNonOwnerExecuteZapryAction,
   isOwnerInvocation,
+  normalizeZapryActionForPermission,
   normalizeRouteSessionKey,
   parseAgentIdFromSessionKey,
   resolveOwnerIdFromBotToken,
@@ -224,6 +226,69 @@ describe("isOwnerInvocation", () => {
         senderIsOwner: false,
         senderId: "10086",
         botToken: "malformed",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("normalizeZapryActionForPermission", () => {
+  it("normalizes legacy senddocument alias to send-document", () => {
+    expect(normalizeZapryActionForPermission("senddocument")).toBe("send-document");
+  });
+
+  it("normalizes snake_case and mixed case names", () => {
+    expect(normalizeZapryActionForPermission("SEND_DOCUMENT")).toBe("send-document");
+    expect(normalizeZapryActionForPermission("get_file")).toBe("get-file");
+  });
+});
+
+describe("canNonOwnerExecuteZapryAction", () => {
+  it("allows current-chat send-document for non-owner", () => {
+    expect(
+      canNonOwnerExecuteZapryAction({
+        action: "send-document",
+        requestedChatId: "zapry:group:g_123",
+        invocationChatId: "g_123",
+      }),
+    ).toBe(true);
+  });
+
+  it("allows get-file without chat binding", () => {
+    expect(
+      canNonOwnerExecuteZapryAction({
+        action: "get-file",
+        requestedChatId: "",
+        invocationChatId: "",
+      }),
+    ).toBe(true);
+  });
+
+  it("denies cross-chat send-message for non-owner", () => {
+    expect(
+      canNonOwnerExecuteZapryAction({
+        action: "send-message",
+        requestedChatId: "g_999",
+        invocationChatId: "g_123",
+      }),
+    ).toBe(false);
+  });
+
+  it("denies owner-only non-send actions for non-owner", () => {
+    expect(
+      canNonOwnerExecuteZapryAction({
+        action: "get-my-profile",
+        requestedChatId: "g_123",
+        invocationChatId: "g_123",
+      }),
+    ).toBe(false);
+  });
+
+  it("denies current-chat sends when invocation chat is unavailable", () => {
+    expect(
+      canNonOwnerExecuteZapryAction({
+        action: "send-document",
+        requestedChatId: "g_123",
+        invocationChatId: "",
       }),
     ).toBe(false);
   });
