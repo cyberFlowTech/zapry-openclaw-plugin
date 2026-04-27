@@ -21,7 +21,7 @@ type SetMySkillsPayload = {
   agentKey?: string;
 };
 
-export type SendLinkCardPayload = {
+export type SendMessageCardPayload = {
   chatId: string;
   url: string;
   title: string;
@@ -123,10 +123,9 @@ export class ZapryApiClient {
     });
   }
 
-  async sendLinkCard(payload: SendLinkCardPayload) {
-    return this.post("sendMessage", {
+	async sendMessageCard(payload: SendMessageCardPayload) {
+		return this.post("sendMessageCard", {
       chat_id: payload.chatId,
-      type: "link_share_card",
       url: payload.url,
       title: payload.title,
       content: payload.content,

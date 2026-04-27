@@ -51,7 +51,7 @@ import { join as joinPath } from "node:path";
 
 const ZAPRY_ACTION_TOOL_ACTIONS = [
   "send", "send-message",
-  "send-link-card",
+  "send-message-card",
   "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation",
   "generate-audio",
   "delete-message", "answer-callback-query",
@@ -272,7 +272,7 @@ const plugin = {
         label: "Zapry Platform Action",
         description:
           "Execute a Zapry platform action. Use this for: " +
-          "sending text, link share cards (send-link-card), and media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
+          "sending text, message cards (send-message-card), and media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
           "IMPORTANT: For send-photo, if user asks for an image without providing one, use 'prompt' parameter (e.g. action='send-photo', prompt='bitcoin logo') — image is auto-generated, NO photo/URL needed. " +
           "profile queries (get-my-profile, get-me), friend operations " +
           "(get-my-friend-requests, accept-friend-request, add-friend, etc.), " +
@@ -301,7 +301,7 @@ const plugin = {
             },
             url: {
               type: "string" as const,
-              description: "HTTP(S) URL (for send-link-card or webhook actions)",
+              description: "HTTP(S) URL (for send-message-card or webhook actions)",
             },
             user_id: {
               type: "string" as const,
@@ -359,11 +359,11 @@ const plugin = {
             },
             content: {
               type: "string" as const,
-              description: "Text content (for comment-post or send-link-card card summary)",
+              description: "Text content (for comment-post or send-message-card summary)",
             },
             title: {
               type: "string" as const,
-              description: "Card title (for send-link-card) or group title (for create-group-chat)",
+              description: "Card title (for send-message-card) or group title (for create-group-chat)",
             },
             description: {
               type: "string" as const,
@@ -375,15 +375,15 @@ const plugin = {
             },
             icon_url: {
               type: "string" as const,
-              description: "Card icon URL (for send-link-card)",
+              description: "Card icon URL (for send-message-card)",
             },
             image_url: {
               type: "string" as const,
-              description: "Card cover image URL (for send-link-card)",
+              description: "Card cover image URL (for send-message-card)",
             },
             fallback_text: {
               type: "string" as const,
-              description: "Fallback text for older clients (for send-link-card)",
+              description: "Fallback text for older clients (for send-message-card)",
             },
             limit: {
               type: "number" as const,

@@ -13,7 +13,7 @@ allowed-tools: ["message", "zapry_action", "zapry_post", "pdf"]
 tags: ["zapry", "messaging", "groups", "feed", "social", "openapi"]
 triggers_api:
   [
-    "sendMessage", "sendLinkCard", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
+    "sendMessage", "sendMessageCard", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
     "generateAudio",
     "deleteMessage", "answerCallbackQuery",
     "getFile",
@@ -34,7 +34,7 @@ triggers_api:
 执行 Zapry 动作时按以下路由：
 
 - `message`: 仅用于最简单的纯文本回复/发送，不承载任何 Zapry 平台 action
-- `zapry_action`: **唯一用于 Zapry 平台动作**，包括发文字（`send-message`）、分享链接卡片（`send-link-card`）、图片、视频、音频、文件、文档，以及所有查询/管理能力。**支持群名自动解析**——直接传群名即可，无需手动查 ID。发送文件用 `action: "send-document"`
+- `zapry_action`: **唯一用于 Zapry 平台动作**，包括发文字（`send-message`）、发送消息卡片（`send-message-card`）、图片、视频、音频、文件、文档，以及所有查询/管理能力。**支持群名自动解析**——直接传群名即可，无需手动查 ID。发送文件用 `action: "send-document"`
 - `zapry_post`: 发广场动态（create-post），传 `content`，可选 `images`
 - `pdf`: 创建 / 分析 PDF 文件。创建后用 `zapry_action send-document` 发送到聊天
 
@@ -42,7 +42,7 @@ triggers_api:
 
 - **发送任何内容（文字/图片/视频/文件/语音）到群聊或私聊**：**一律用 `zapry_action`**
   - 发文字用 `action: "send-message"`（支持群名自动解析）
-  - 主动分享 URL 卡片用 `action: "send-link-card"`，必填 `chat_id`、`url`、`title`
+  - 主动分享 URL 卡片用 `action: "send-message-card"`，必填 `chat_id`、`url`、`title`
   - 发图片用 `action: "send-photo"`
   - 发视频/文件/音频分别用对应 action
 - **禁止用 `message` 工具向群聊发文字**——`message` 工具不支持群名自动解析，会导致发送失败
@@ -203,7 +203,7 @@ triggers_api:
 ### Messaging
 
 - `send-message`：`chat_id`, `text`；可选 `reply_markup`, `reply_to_message_id`, `message_thread_id`
-- `send-link-card`：`chat_id`, `url`, `title`；可选 `content`, `text`, `icon_url`, `image_url`, `source`, `open_mode`, `fallback_text`, `extra`, `reply_markup`, `reply_to_message_id`, `message_thread_id`
+- `send-message-card`：`chat_id`, `url`, `title`；可选 `content`, `text`, `icon_url`, `image_url`, `source`, `open_mode`, `fallback_text`, `extra`, `reply_markup`, `reply_to_message_id`, `message_thread_id`
 - `send-photo`：`chat_id`；可选 `photo`（图片源）或 `prompt`（文字描述，自动生成图片）
 - `send-video`：`chat_id`, `video`
 - `send-document`：`chat_id`, `document`

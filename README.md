@@ -6,7 +6,7 @@ Install this plugin to let your OpenClaw agent interact with Zapry through `chan
 
 ## Features
 
-- **Messaging** — Send text, link share cards, media, delete messages, answer callback queries
+- **Messaging** — Send text, message cards, media, delete messages, answer callback queries
 - **Receive/Webhook** — Poll updates, manage webhooks, inspect inbound endpoint
 - **Skills** — Manage SOUL, skills, and derived profile
 - **Directory & Groups** — Query chats/groups/members, create/dismiss groups, and perform moderation actions
@@ -106,7 +106,7 @@ Agent: → zapry_post { content: "Good morning!" }
 
 ### Available Actions
 
-- Messaging: `send-message`, `send-link-card`, `send-photo`, `send-video`, `send-document`, `send-audio`, `send-voice`, `send-animation`, `generate-audio`, `delete-message`, `answer-callback-query`
+- Messaging: `send-message`, `send-message-card`, `send-photo`, `send-video`, `send-document`, `send-audio`, `send-voice`, `send-animation`, `generate-audio`, `delete-message`, `answer-callback-query`
 - Receive/Webhook: `get-updates`, `get-file`, `set-webhook`, `get-webhook-info`, `delete-webhook`, `webhooks-token`
 - Skills: `set-my-soul`, `get-my-soul`, `set-my-skills`, `get-my-skills`, `get-my-profile`
 - Group Query & Moderation: `get-my-groups`, `get-my-chats`, `get-chat-member`, `get-chat-members`, `get-chat-member-count`, `get-chat-administrators`, `create-group-chat`, `dismiss-group-chat`, `invite-chat-member`, `mute-chat-member`, `kick-chat-member`, `set-chat-title`, `set-chat-description`
@@ -126,9 +126,9 @@ This plugin follows the API reference 1:1. Prefer documented parameter names in 
 
 Common camelCase aliases are still accepted (`chatId`, `userId`, `messageId`, `dynamicId`, `clubId`, `pageSize`, `languageCode`), but snake_case is canonical.
 
-Link share card:
+Message card:
 
-- Use `send-link-card` when an agent should actively share a URL as a structured chat card, not as plain text.
+- Use `send-message-card` when an agent should actively share a URL as a structured chat card, not as plain text.
 - Required params: `chat_id`, `url`, `title`; optional params: `content`, `text`, `icon_url`, `image_url`, `source`, `open_mode`, `fallback_text`, `extra`.
 - The card URL must be HTTP(S). `open_mode` defaults to `dapp_browser` and `source` defaults to `agent`.
 

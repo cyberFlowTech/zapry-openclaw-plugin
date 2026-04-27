@@ -131,7 +131,7 @@ export const zapryPlugin = {
     messageToolHints: () => [
       `For ALL Zapry operations, prefer "zapry_action" tool. ` +
       `To send text messages: use "zapry_action" action="send-message" with chat_id and text — supports group names (auto-resolved). ` +
-      `To share a URL as a rich card: use "zapry_action" action="send-link-card" with chat_id, url, title, and optional content/text/icon_url/image_url. ` +
+      `To send a message card: use "zapry_action" action="send-message-card" with chat_id, url, title, and optional content/text/icon_url/image_url. ` +
       `To send photos: use "zapry_action" action="send-photo" with "prompt" parameter to auto-generate images (e.g. prompt="cute cat"). ` +
       `To send video/audio/document: use "zapry_action" with send-video/send-audio/send-document. ` +
       `To manage groups: use "zapry_action" with create-group-chat, invite-chat-member, kick-chat-member, or dismiss-group-chat. ` +
