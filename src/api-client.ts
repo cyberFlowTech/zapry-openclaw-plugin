@@ -21,6 +21,31 @@ type SetMySkillsPayload = {
   agentKey?: string;
 };
 
+export type SendLinkCardPayload = {
+  chatId: string;
+  url: string;
+  title: string;
+  content?: string;
+  text?: string;
+  iconUrl?: string;
+  imageUrl?: string;
+  source?: string;
+  openMode?: string;
+  fallbackText?: string;
+  extra?: Record<string, unknown>;
+  replyToMessageId?: string;
+  messageThreadId?: string;
+  replyMarkup?: unknown;
+};
+
+export type CreateGroupChatPayload = {
+  title: string;
+  description?: string;
+  avatar?: string;
+  userIds?: string[];
+  botIds?: string[];
+};
+
 export class ZapryApiClient {
   constructor(
     private baseUrl: string,
@@ -95,6 +120,37 @@ export class ZapryApiClient {
       reply_to_message_id: opts?.replyToMessageId,
       message_thread_id: opts?.messageThreadId,
       reply_markup: opts?.replyMarkup,
+    });
+  }
+
+  async sendLinkCard(payload: SendLinkCardPayload) {
+    return this.post("sendMessage", {
+      chat_id: payload.chatId,
+      type: "link_share_card",
+      url: payload.url,
+      title: payload.title,
+      content: payload.content,
+      text: payload.text,
+      icon_url: payload.iconUrl,
+      image_url: payload.imageUrl,
+      source: payload.source,
+      open_mode: payload.openMode,
+      fallback_text: payload.fallbackText,
+      options: {
+        url: payload.url,
+        title: payload.title,
+        content: payload.content,
+        text: payload.text,
+        icon_url: payload.iconUrl,
+        image_url: payload.imageUrl,
+        source: payload.source,
+        open_mode: payload.openMode,
+        fallback_text: payload.fallbackText,
+        extra: payload.extra,
+      },
+      reply_to_message_id: payload.replyToMessageId,
+      message_thread_id: payload.messageThreadId,
+      reply_markup: payload.replyMarkup,
     });
   }
 
@@ -227,6 +283,20 @@ export class ZapryApiClient {
 
   async getChatAdministrators(chatId: string) {
     return this.post("getChatAdministrators", { chat_id: chatId });
+  }
+
+  async createGroupChat(payload: CreateGroupChatPayload) {
+    return this.post("createGroupChat", {
+      title: payload.title,
+      description: payload.description,
+      avatar: payload.avatar,
+      user_ids: payload.userIds,
+      bot_ids: payload.botIds,
+    });
+  }
+
+  async dismissGroupChat(chatId: string, reason?: string) {
+    return this.post("dismissGroupChat", { chat_id: chatId, reason });
   }
 
   async muteChatMember(chatId: string, userId: string, mute: boolean) {

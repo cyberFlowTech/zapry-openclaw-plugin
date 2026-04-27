@@ -24,6 +24,9 @@ export type ActionResult = {
 const ACTION_ALIASES: Record<string, string> = {
   send: "send",
   sendmessage: "send-message",
+  sendlinkcard: "send-link-card",
+  sendlinksharecard: "send-link-card",
+  sendlinkshare: "send-link-card",
   sendphoto: "send-photo",
   sendvideo: "send-video",
   senddocument: "send-document",
@@ -51,6 +54,12 @@ const ACTION_ALIASES: Record<string, string> = {
   getchatmemberscount: "get-chat-member-count",
   getchatadministrators: "get-chat-administrators",
   getchatadmins: "get-chat-administrators",
+  creategroupchat: "create-group-chat",
+  createchatgroup: "create-group-chat",
+  newgroupchat: "create-group-chat",
+  dismissgroupchat: "dismiss-group-chat",
+  dissolvegroupchat: "dismiss-group-chat",
+  deletegroupchat: "dismiss-group-chat",
   mutechatmember: "mute-chat-member",
   kickchatmember: "kick-chat-member",
   invitechatmember: "invite-chat-member",
@@ -196,6 +205,25 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
           replyMarkup: normalized.reply_markup,
         }),
       );
+    case "send-link-card":
+      return wrap(
+        client.sendLinkCard({
+          chatId: normalized.chat_id,
+          url: normalized.url,
+          title: normalized.title,
+          content: normalized.content,
+          text: normalized.text,
+          iconUrl: normalized.icon_url,
+          imageUrl: normalized.image_url,
+          source: normalized.source,
+          openMode: normalized.open_mode,
+          fallbackText: normalized.fallback_text,
+          extra: normalized.extra,
+          replyToMessageId: normalized.reply_to_message_id,
+          messageThreadId: normalized.message_thread_id,
+          replyMarkup: normalized.reply_markup,
+        }),
+      );
     case "send-photo": {
       const photoSource = normalized.photo || normalized.media;
       if (!photoSource && isNonEmptyString(normalized.prompt)) {
@@ -302,6 +330,18 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.getChatMemberCount(normalized.chat_id));
     case "get-chat-administrators":
       return wrap(client.getChatAdministrators(normalized.chat_id));
+    case "create-group-chat":
+      return wrap(
+        client.createGroupChat({
+          title: normalized.title,
+          description: normalized.description,
+          avatar: normalized.avatar,
+          userIds: normalized.user_ids,
+          botIds: normalized.bot_ids,
+        }),
+      );
+    case "dismiss-group-chat":
+      return wrap(client.dismissGroupChat(normalized.chat_id, normalized.reason));
     case "mute-chat-member":
       return wrap(client.muteChatMember(normalized.chat_id, normalized.user_id, normalized.mute));
     case "kick-chat-member":
@@ -1064,6 +1104,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
   const requiredByAction: Record<string, string[]> = {
     // Messaging
     "send-message": ["chat_id", "text"],
+    "send-link-card": ["chat_id", "url", "title"],
     "send-photo": ["chat_id"],
     "send-video": ["chat_id", "video"],
     "send-document": ["chat_id", "document"],
@@ -1087,6 +1128,8 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     "get-chat-members": ["chat_id"],
     "get-chat-member-count": ["chat_id"],
     "get-chat-administrators": ["chat_id"],
+    "create-group-chat": ["title"],
+    "dismiss-group-chat": ["chat_id"],
     "mute-chat-member": ["chat_id", "user_id", "mute"],
     "kick-chat-member": ["chat_id", "user_id"],
     "invite-chat-member": ["chat_id", "user_id"],
@@ -1285,6 +1328,10 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const audioFormat = pickFirst(params, ["audio_format", "audioFormat", "format"]);
   const durationSeconds = pickFirst(params, ["duration_seconds", "durationSeconds", "duration"]);
   const fallbackText = pickFirst(params, ["fallback_text", "fallbackText", "error_fallback_text"]);
+  const iconUrl = pickFirst(params, ["icon_url", "iconUrl", "icon"]);
+  const imageUrl = pickFirst(params, ["image_url", "imageUrl", "cover_url", "coverUrl"]);
+  const openMode = pickFirst(params, ["open_mode", "openMode"]);
+  const extra = pickFirst(params, ["extra"]);
 
   if (chatId !== undefined) params.chat_id = normalizeChatId(chatId);
   if (userId !== undefined) params.user_id = String(userId).trim();
@@ -1331,6 +1378,22 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (desc !== undefined) params.desc = String(desc).trim();
   const avatar = pickFirst(params, ["avatar"]);
   if (avatar !== undefined) params.avatar = String(avatar).trim();
+  const reason = pickFirst(params, ["reason"]);
+  if (reason !== undefined) params.reason = String(reason).trim();
+  const userIds = pickFirst(params, ["user_ids", "userIds", "members", "member_ids", "memberIds"]);
+  if (userIds !== undefined) {
+    const normalizedUserIds = normalizeIdArray(userIds);
+    if (normalizedUserIds) {
+      params.user_ids = normalizedUserIds;
+    }
+  }
+  const botIds = pickFirst(params, ["bot_ids", "botIds", "bots", "bot_ids"]);
+  if (botIds !== undefined) {
+    const normalizedBotIds = normalizeIdArray(botIds);
+    if (normalizedBotIds) {
+      params.bot_ids = normalizedBotIds;
+    }
+  }
 
   if (skills !== undefined) {
     if (Array.isArray(skills)) {
@@ -1356,6 +1419,20 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (audioFormat !== undefined) params.audio_format = String(audioFormat).trim();
   if (durationSeconds !== undefined) params.duration_seconds = toNumberIfPossible(durationSeconds);
   if (fallbackText !== undefined) params.fallback_text = String(fallbackText).trim();
+  if (iconUrl !== undefined) params.icon_url = String(iconUrl).trim();
+  if (imageUrl !== undefined) params.image_url = String(imageUrl).trim();
+  if (openMode !== undefined) params.open_mode = String(openMode).trim();
+  if (extra !== undefined) {
+    if (typeof extra === "string") {
+      try {
+        params.extra = JSON.parse(extra);
+      } catch {
+        params.extra = extra;
+      }
+    } else {
+      params.extra = extra;
+    }
+  }
 
   const offset = pickFirst(params, ["offset"]);
   if (offset !== undefined) params.offset = toNumberIfPossible(offset);
@@ -1480,6 +1557,30 @@ function normalizeStringArray(value: unknown): string[] | null {
   if (value && typeof value === "object") {
     const source = toMediaSourceString(value);
     return source ? [source] : null;
+  }
+  return null;
+}
+
+function normalizeIdArray(value: unknown): string[] | null {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return [];
+    }
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item).trim()).filter(Boolean);
+        }
+      } catch {
+        // fall through to comma-separated handling
+      }
+    }
+    return trimmed.split(",").map((item) => item.trim()).filter(Boolean);
   }
   return null;
 }

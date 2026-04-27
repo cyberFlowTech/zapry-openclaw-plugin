@@ -51,12 +51,14 @@ import { join as joinPath } from "node:path";
 
 const ZAPRY_ACTION_TOOL_ACTIONS = [
   "send", "send-message",
+  "send-link-card",
   "send-photo", "send-video", "send-document", "send-audio", "send-voice", "send-animation",
   "generate-audio",
   "delete-message", "answer-callback-query",
   "get-file", "get-my-profile", "get-me",
   "get-my-groups", "get-my-chats",
   "get-chat-member", "get-chat-members", "get-chat-member-count", "get-chat-administrators",
+  "create-group-chat", "dismiss-group-chat", "invite-chat-member",
   "mute-chat-member", "kick-chat-member", "set-chat-title", "set-chat-description",
   "get-user-profile-photos", "set-my-wallet-address", "set-my-friend-verify",
   "get-my-contacts", "get-my-friend-requests",
@@ -270,11 +272,11 @@ const plugin = {
         label: "Zapry Platform Action",
         description:
           "Execute a Zapry platform action. Use this for: " +
-          "sending media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
+          "sending text, link share cards (send-link-card), and media (send-photo, send-video, send-audio, send-document, send-voice, send-animation) to any chat including groups. " +
           "IMPORTANT: For send-photo, if user asks for an image without providing one, use 'prompt' parameter (e.g. action='send-photo', prompt='bitcoin logo') — image is auto-generated, NO photo/URL needed. " +
           "profile queries (get-my-profile, get-me), friend operations " +
           "(get-my-friend-requests, accept-friend-request, add-friend, etc.), " +
-          "group management (get-chat-members, mute-chat-member, kick-chat-member, etc.), " +
+          "group management (create-group-chat, invite-chat-member, kick-chat-member, dismiss-group-chat, get-chat-members, etc.), " +
           "feed reading (get-trending-posts, get-latest-posts, search-posts, etc.), " +
           "feed interactions (delete-post, comment-post, like-post, share-post), " +
           "bot settings (set-my-soul, set-my-skills, set-my-name, etc.), " +
@@ -295,11 +297,25 @@ const plugin = {
             },
             chat_id: {
               type: "string" as const,
-              description: "Chat/group ID (for group management actions like get-chat-members, mute-chat-member, etc.)",
+              description: "Chat/group ID (for group management actions like get-chat-members, invite-chat-member, kick-chat-member, dismiss-group-chat, etc.)",
+            },
+            url: {
+              type: "string" as const,
+              description: "HTTP(S) URL (for send-link-card or webhook actions)",
             },
             user_id: {
               type: "string" as const,
               description: "User ID (for friend actions, chat member actions, etc.)",
+            },
+            user_ids: {
+              type: "array" as const,
+              items: { type: "string" as const },
+              description: "Initial member user IDs (for create-group-chat)",
+            },
+            bot_ids: {
+              type: "array" as const,
+              items: { type: "string" as const },
+              description: "Initial bot IDs (for create-group-chat)",
             },
             file_id: {
               type: "string" as const,
@@ -343,7 +359,31 @@ const plugin = {
             },
             content: {
               type: "string" as const,
-              description: "Text content (for comment-post)",
+              description: "Text content (for comment-post or send-link-card card summary)",
+            },
+            title: {
+              type: "string" as const,
+              description: "Card title (for send-link-card) or group title (for create-group-chat)",
+            },
+            description: {
+              type: "string" as const,
+              description: "Group description (for create-group-chat or set-chat-description)",
+            },
+            reason: {
+              type: "string" as const,
+              description: "Optional operation reason (for dismiss-group-chat)",
+            },
+            icon_url: {
+              type: "string" as const,
+              description: "Card icon URL (for send-link-card)",
+            },
+            image_url: {
+              type: "string" as const,
+              description: "Card cover image URL (for send-link-card)",
+            },
+            fallback_text: {
+              type: "string" as const,
+              description: "Fallback text for older clients (for send-link-card)",
             },
             limit: {
               type: "number" as const,

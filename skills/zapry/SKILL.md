@@ -13,12 +13,12 @@ allowed-tools: ["message", "zapry_action", "zapry_post", "pdf"]
 tags: ["zapry", "messaging", "groups", "feed", "social", "openapi"]
 triggers_api:
   [
-    "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
+    "sendMessage", "sendLinkCard", "sendPhoto", "sendVideo", "sendDocument", "sendAudio", "sendVoice", "sendAnimation",
     "generateAudio",
     "deleteMessage", "answerCallbackQuery",
     "getFile",
     "getUpdates", "setWebhook", "getWebhookInfo", "deleteWebhook", "webhooks/:token",
-    "muteChatMember", "kickChatMember", "setChatTitle", "setChatDescription",
+    "createGroupChat", "dismissGroupChat", "inviteChatMember", "muteChatMember", "kickChatMember", "setChatTitle", "setChatDescription",
     "getChatAdministrators", "getChatMember", "getChatMembers", "getChatMemberCount",
     "getMyGroups", "getMyChats", "getMyContacts", "setMyFriendVerify", "getMyFriendRequests",
     "acceptFriendRequest", "rejectFriendRequest", "addFriend", "deleteFriend",
@@ -34,7 +34,7 @@ triggers_api:
 执行 Zapry 动作时按以下路由：
 
 - `message`: 仅用于最简单的纯文本回复/发送，不承载任何 Zapry 平台 action
-- `zapry_action`: **唯一用于 Zapry 平台动作**，包括发文字（`send-message`）、图片、视频、音频、文件、文档，以及所有查询/管理能力。**支持群名自动解析**——直接传群名即可，无需手动查 ID。发送文件用 `action: "send-document"`
+- `zapry_action`: **唯一用于 Zapry 平台动作**，包括发文字（`send-message`）、分享链接卡片（`send-link-card`）、图片、视频、音频、文件、文档，以及所有查询/管理能力。**支持群名自动解析**——直接传群名即可，无需手动查 ID。发送文件用 `action: "send-document"`
 - `zapry_post`: 发广场动态（create-post），传 `content`，可选 `images`
 - `pdf`: 创建 / 分析 PDF 文件。创建后用 `zapry_action send-document` 发送到聊天
 
@@ -42,6 +42,7 @@ triggers_api:
 
 - **发送任何内容（文字/图片/视频/文件/语音）到群聊或私聊**：**一律用 `zapry_action`**
   - 发文字用 `action: "send-message"`（支持群名自动解析）
+  - 主动分享 URL 卡片用 `action: "send-link-card"`，必填 `chat_id`、`url`、`title`
   - 发图片用 `action: "send-photo"`
   - 发视频/文件/音频分别用对应 action
 - **禁止用 `message` 工具向群聊发文字**——`message` 工具不支持群名自动解析，会导致发送失败
@@ -91,7 +92,7 @@ triggers_api:
 **owner-only action 清单（含只读查询）：**
 - 好友/联系人：`get-my-contacts` / `get-my-friend-requests` / `accept-friend-request` / `reject-friend-request` / `add-friend` / `delete-friend`
 - Bot 资料/配置：`get-me` / `get-my-profile` / `get-my-soul` / `set-my-soul` / `get-my-skills` / `set-my-skills` / `set-my-name` / `set-my-description` / `set-my-wallet-address` / `set-my-friend-verify`
-- 群组/会话/历史：`get-my-groups` / `get-my-chats` / `get-chat-history` / `get-chat-member` / `get-chat-members` / `get-chat-member-count` / `get-chat-administrators` / `mute-chat-member` / `kick-chat-member` / `invite-chat-member` / `set-chat-title` / `set-chat-description`
+- 群组/会话/历史：`get-my-groups` / `get-my-chats` / `get-chat-history` / `get-chat-member` / `get-chat-members` / `get-chat-member-count` / `get-chat-administrators` / `create-group-chat` / `dismiss-group-chat` / `invite-chat-member` / `mute-chat-member` / `kick-chat-member` / `set-chat-title` / `set-chat-description`
 - Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
 - 其他平台动作：任何通过 `zapry_action` 发起的跨聊天发送、平台查询、平台管理动作，默认都按 owner-only 处理
 
@@ -114,7 +115,7 @@ triggers_api:
 
 - `chat_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`
 - `page`, `page_size`, `language_code`, `wallet_address`, `need_verify`, `pending_only`
-- `text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `content`, `images`
+- `text`, `url`, `title`, `content`, `icon_url`, `image_url`, `fallback_text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `images`
 - `soulMd`, `skills`, `version`, `source`, `agentKey`
 
 兼容别名（仅兼容，不作为主写法）：`chatId`、`userId`、`messageId`、`dynamicId`、`pageSize`、`languageCode`
@@ -202,6 +203,7 @@ triggers_api:
 ### Messaging
 
 - `send-message`：`chat_id`, `text`；可选 `reply_markup`, `reply_to_message_id`, `message_thread_id`
+- `send-link-card`：`chat_id`, `url`, `title`；可选 `content`, `text`, `icon_url`, `image_url`, `source`, `open_mode`, `fallback_text`, `extra`, `reply_markup`, `reply_to_message_id`, `message_thread_id`
 - `send-photo`：`chat_id`；可选 `photo`（图片源）或 `prompt`（文字描述，自动生成图片）
 - `send-video`：`chat_id`, `video`
 - `send-document`：`chat_id`, `document`
@@ -238,6 +240,9 @@ triggers_api:
 - `get-chat-members`：`chat_id`；可选 `page`, `page_size`, `keyword`
 - `get-chat-member-count`：`chat_id`
 - `get-chat-administrators`：`chat_id`
+- `create-group-chat`：`title`；可选 `description`, `avatar`, `user_ids`, `bot_ids`
+- `dismiss-group-chat`：`chat_id`；可选 `reason`
+- `invite-chat-member`：`chat_id`, `user_id`
 - `mute-chat-member`：`chat_id`, `user_id`, `mute`
 - `kick-chat-member`：`chat_id`, `user_id`
 - `set-chat-title`：`chat_id`, `title`
