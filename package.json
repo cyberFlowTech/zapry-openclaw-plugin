@@ -1,6 +1,6 @@
 {
   "name": "zapry-openclaw-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenClaw Zapry channel plugin — messaging, groups, feed, clubs, and bot self-management",
   "type": "module",
   "license": "MIT",
