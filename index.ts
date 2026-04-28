@@ -67,6 +67,8 @@ const ZAPRY_ACTION_TOOL_ACTIONS = [
   "set-my-name", "set-my-description",
   "get-trending-posts", "get-latest-posts", "get-my-posts", "search-posts",
   "delete-post", "comment-post", "like-post", "share-post",
+  "get-my-clubs", "create-club", "update-club",
+  "mute-club-member", "kick-club-member",
   "get-updates", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
   "get-chat-history",
 ] as const;
@@ -279,6 +281,7 @@ const plugin = {
           "group management (create-group-chat, invite-chat-member, kick-chat-member, dismiss-group-chat, get-chat-members, etc.), " +
           "feed reading (get-trending-posts, get-latest-posts, search-posts, etc.), " +
           "feed interactions (delete-post, comment-post, like-post, share-post), " +
+          "club moderation (mute-club-member, kick-club-member), " +
           "bot settings (set-my-soul, set-my-skills, set-my-name, etc.), " +
           "chat history (get-chat-history), " +
           "and webhook/file operations (get-file, set-webhook, get-updates, etc.). " +
@@ -299,13 +302,17 @@ const plugin = {
               type: "string" as const,
               description: "Chat/group ID (for group management actions like get-chat-members, invite-chat-member, kick-chat-member, dismiss-group-chat, etc.)",
             },
+            club_id: {
+              type: "number" as const,
+              description: "Club ID (for club moderation actions like mute-club-member and kick-club-member)",
+            },
             url: {
               type: "string" as const,
               description: "HTTP(S) URL (for send-message-card or webhook actions)",
             },
             user_id: {
               type: "string" as const,
-              description: "User ID (for friend actions, chat member actions, etc.)",
+              description: "User ID (for friend actions, chat member actions, club member actions, etc.)",
             },
             user_ids: {
               type: "array" as const,
@@ -396,6 +403,14 @@ const plugin = {
             page_size: {
               type: "number" as const,
               description: "Page size for paginated results",
+            },
+            mute: {
+              type: "boolean" as const,
+              description: "Mute flag for moderation actions. For mute-club-member, true mutes and false unmutes.",
+            },
+            duration_seconds: {
+              type: "number" as const,
+              description: "Mute duration in seconds for mute-club-member when mute=true. Maximum 2592000.",
             },
           },
           required: ["action"],

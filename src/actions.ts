@@ -99,6 +99,9 @@ const ACTION_ALIASES: Record<string, string> = {
   getmyclubs: "get-my-clubs",
   createclub: "create-club",
   updateclub: "update-club",
+  muteclubmember: "mute-club-member",
+  unmuteclubmember: "mute-club-member",
+  kickclubmember: "kick-club-member",
 
   getchathistory: "get-chat-history",
 
@@ -404,6 +407,17 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(
         client.updateClub(normalized.club_id, normalized.name, normalized.desc, normalized.avatar),
       );
+    case "mute-club-member":
+      return wrap(
+        client.muteClubMember(
+          normalized.club_id,
+          normalized.user_id,
+          normalized.mute,
+          normalized.duration_seconds,
+        ),
+      );
+    case "kick-club-member":
+      return wrap(client.kickClubMember(normalized.club_id, normalized.user_id));
 
     // ── Bot Self-Management ──
     case "get-me":
@@ -1162,6 +1176,8 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     // Club
     "create-club": ["name"],
     "update-club": ["club_id"],
+    "mute-club-member": ["club_id", "user_id", "mute"],
+    "kick-club-member": ["club_id", "user_id"],
   };
 
   const required = requiredByAction[action];
@@ -1178,6 +1194,16 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     const skillsErr = validateSkillsPayload(params.skills);
     if (skillsErr) {
       return skillsErr;
+    }
+  }
+
+  if (action === "mute-club-member" && params.mute === true) {
+    const duration = Number(params.duration_seconds);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return "duration_seconds must be greater than 0 when mute=true";
+    }
+    if (duration > 2_592_000) {
+      return "duration_seconds exceeds maximum 2592000";
     }
   }
 

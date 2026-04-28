@@ -420,6 +420,19 @@ export class ZapryApiClient {
     return this.post("updateClub", { club_id: clubId, name, desc, avatar });
   }
 
+  async muteClubMember(clubId: number, userId: string, mute: boolean, durationSeconds?: number) {
+    return this.post("muteClubMember", {
+      club_id: clubId,
+      user_id: userId,
+      mute,
+      duration_seconds: durationSeconds,
+    });
+  }
+
+  async kickClubMember(clubId: number, userId: string) {
+    return this.post("kickClubMember", { club_id: clubId, user_id: userId });
+  }
+
   async setMyPresence(online: boolean) {
     return this.post("setMyPresence", { online });
   }

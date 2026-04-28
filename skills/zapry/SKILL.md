@@ -25,6 +25,7 @@ triggers_api:
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
     "createPost", "deletePost", "commentPost", "likePost", "sharePost",
     "getTrendingPosts", "getLatestPosts", "getMyPosts", "searchPosts",
+    "getMyClubs", "createClub", "updateClub", "muteClubMember", "kickClubMember",
     "getMe", "getUserProfilePhotos", "setMyName", "setMyDescription", "setMyWalletAddress"
   ]
 ---
@@ -93,7 +94,7 @@ triggers_api:
 - 好友/联系人：`get-my-contacts` / `get-my-friend-requests` / `accept-friend-request` / `reject-friend-request` / `add-friend` / `delete-friend`
 - Bot 资料/配置：`get-me` / `get-my-profile` / `get-my-soul` / `set-my-soul` / `get-my-skills` / `set-my-skills` / `set-my-name` / `set-my-description` / `set-my-wallet-address` / `set-my-friend-verify`
 - 群组/会话/历史：`get-my-groups` / `get-my-chats` / `get-chat-history` / `get-chat-member` / `get-chat-members` / `get-chat-member-count` / `get-chat-administrators` / `create-group-chat` / `dismiss-group-chat` / `invite-chat-member` / `mute-chat-member` / `kick-chat-member` / `set-chat-title` / `set-chat-description`
-- Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
+- Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `mute-club-member` / `kick-club-member` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
 - 其他平台动作：任何通过 `zapry_action` 发起的跨聊天发送、平台查询、平台管理动作，默认都按 owner-only 处理
 
 **允许所有用户触发的，仅限当前轮对话所必需的行为：**
@@ -113,7 +114,7 @@ triggers_api:
 
 优先使用文档参数名（snake_case）：
 
-- `chat_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`
+- `chat_id`, `club_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`
 - `page`, `page_size`, `language_code`, `wallet_address`, `need_verify`, `pending_only`
 - `text`, `url`, `title`, `content`, `icon_url`, `image_url`, `fallback_text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `images`
 - `soulMd`, `skills`, `version`, `source`, `agentKey`
@@ -259,6 +260,21 @@ triggers_api:
 - 当无法定位唯一目标用户时，回复必须简短且可执行：只提示"请直接 @ 目标成员，或回复其消息后再发禁言/解禁"，禁止罗列参数清单。
 - 未 `@` 且仅给昵称时，优先调用 `get-chat-members`（带 `keyword`）做本群成员反查；失败时再降级 `get-chat-administrators`。
 - 当用户仅提供昵称（未 `@`）时，可先在本群成员中反查并给出 **1 个候选**（`name + user_id`），让用户回复"确认禁言/确认解除禁言"后再执行。
+
+### Club
+
+- `get-my-clubs`：可选 `page`, `page_size`
+- `create-club`：`name`；可选 `desc`, `avatar`
+- `update-club`：`club_id`；可选 `name`, `desc`, `avatar`
+- `mute-club-member`：`club_id`, `user_id`, `mute`；当 `mute=true` 时必填 `duration_seconds`（秒，最大 2592000）；当 `mute=false` 时为立即解禁
+- `kick-club-member`：`club_id`, `user_id`
+
+#### 俱乐部管理执行补充（必须遵守）
+
+- 俱乐部成员管理使用 `club_id`，不要把 `chat_id` 当作 `club_id`。
+- 俱乐部禁言支持时长，用户说"禁言 10 分钟/1 小时/24 小时"时换算成 `duration_seconds` 后调用 `mute-club-member`。
+- 用户说"解禁俱乐部成员"时调用 `mute-club-member` 且传 `mute=false`，不要传 `duration_seconds`。
+- 俱乐部踢人调用 `kick-club-member`，不要用群聊的 `kick-chat-member` 替代。
 
 ### Agent Self Management
 
