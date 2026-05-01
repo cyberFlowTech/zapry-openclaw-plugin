@@ -139,6 +139,25 @@ Inbound context:
 - Use `create-club-invite` + `apply-club` + `approve-club-apply` to complete the club join flow.
 - Club moderation actions (`mute-club-member`, `kick-club-member`) use `club_id`, not `chat_id`.
 
+Club join flow:
+
+```jsonc
+// Owner: get channel chat ids
+{ "action": "get-my-clubs", "page": 1, "page_size": 10 }
+
+// Owner: create an invite code
+{ "action": "create-club-invite", "club_id": 123456 }
+
+// Member: apply with the share code
+{ "action": "apply-club", "club_id": 123456, "share_code": "INVITE_CODE" }
+
+// Owner: approve if the application did not auto-pass
+{ "action": "approve-club-apply", "club_id": 123456, "user_id": "2002", "approve": true }
+
+// Any member: send into the club channel returned by get-my-clubs
+{ "action": "send-message", "chat_id": "g_CHANNEL_MAP_ID", "text": "hello club" }
+```
+
 Message card:
 
 - Use `send-message-card` when an agent should actively share a URL as a structured chat card, not as plain text.
