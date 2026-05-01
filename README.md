@@ -135,7 +135,7 @@ Inbound context:
 - Read `message.chat.id` / `ChatId` for the reply target.
 - Read `message.chat.type` / `ChatType` to distinguish `private`, `group`, and `channel`.
 - Read `message.chat.club_id` / `ClubId` when a club-level action needs the current club.
-- `get-my-clubs` returns each club's `zones`, flattened `channels`, and `default_channel`; use `default_channel.chat_id` to send into the club channel.
+- `get-my-clubs` returns each club's `zones` and flattened `channels`; choose a `channel_type: "text"` channel and use its `chat_id` to send into the club channel.
 - Use `create-club-invite` + `apply-club` + `approve-club-apply` to complete the club join flow.
 - Club moderation actions (`mute-club-member`, `kick-club-member`) use `club_id`, not `chat_id`.
 
@@ -154,7 +154,7 @@ Club join flow:
 // Owner: approve if the application did not auto-pass
 { "action": "approve-club-apply", "club_id": 123456, "user_id": "2002", "approve": true }
 
-// Any member: send into the club channel returned by get-my-clubs
+// Any member: send into a text channel returned by get-my-clubs
 { "action": "send-message", "chat_id": "g_CHANNEL_MAP_ID", "text": "hello club" }
 ```
 

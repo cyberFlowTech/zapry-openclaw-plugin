@@ -132,7 +132,7 @@ triggers_api:
 
 俱乐部成员管理动作必须使用 `club_id`。如果当前消息来自俱乐部频道，直接使用 `ClubId` / `message.chat.club_id`；不要把 `chat_id` 当作 `club_id`。
 
-`get-my-clubs` 会返回俱乐部频道：优先读取 `default_channel.chat_id` 作为发消息目标；需要展示完整结构时读取 `zones[].channels[]` 或扁平化的 `channels[]`。
+`get-my-clubs` 会返回俱乐部频道：从扁平化 `channels[]` 中选择 `channel_type=text` 的 `chat_id` 作为发消息目标；需要展示完整结构时读取 `zones[].channels[]`。
 
 ## 3) 媒体来源约束（必须遵守）
 
@@ -288,7 +288,7 @@ triggers_api:
 #### 俱乐部管理执行补充（必须遵守）
 
 - 俱乐部成员管理使用 `club_id`，不要把 `chat_id` 当作 `club_id`。
-- 需要向俱乐部频道发消息时，先调用 `get-my-clubs`，从目标俱乐部的 `default_channel.chat_id` 获取频道会话 ID，再调用 `send-message`。
+- 需要向俱乐部频道发消息时，先调用 `get-my-clubs`，从目标俱乐部的 `channels[]` 里选择 `channel_type=text` 的 `chat_id`，再调用 `send-message`。
 - 邀请/加入闭环：owner 调 `create-club-invite` 获取 `share_code`；成员调 `apply-club` 并传 `share_code`；如果 `is_pass=false`，owner 再调 `approve-club-apply`。
 - 俱乐部禁言支持时长，用户说"禁言 10 分钟/1 小时/24 小时"时换算成 `duration_seconds` 后调用 `mute-club-member`。
 - 用户说"解禁俱乐部成员"时调用 `mute-club-member` 且传 `mute=false`，不要传 `duration_seconds`。
