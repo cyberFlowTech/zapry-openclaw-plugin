@@ -5,6 +5,7 @@ import type {
   FeedListResponse,
   CreatePostResponse,
   ChatHistoryResponse,
+  ZapryUpdate,
 } from "./types.js";
 
 type SetMySoulPayload = {
@@ -203,7 +204,7 @@ export class ZapryApiClient {
 
   // ── Receive / Webhook ──
 
-  async getUpdates(offset?: number, limit?: number, timeout?: number) {
+  async getUpdates(offset?: number, limit?: number, timeout?: number): Promise<ZapryApiResponse<ZapryUpdate[]>> {
     return this.post("getUpdates", { offset, limit, timeout });
   }
 

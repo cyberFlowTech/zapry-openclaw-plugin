@@ -51,6 +51,42 @@ export type ZapryApiResponse<T = unknown> = {
   description?: string;
 };
 
+export type ZapryChat = {
+  id: string;
+  type?: "private" | "group" | "supergroup" | "channel" | string;
+  title?: string;
+  club_id?: string;
+};
+
+export type ZapryUser = {
+  id: string;
+  name?: string;
+  username?: string;
+  is_bot?: boolean;
+};
+
+export type ZapryMessage = {
+  message_id: string;
+  from?: ZapryUser;
+  chat: ZapryChat;
+  date?: number;
+  text?: string;
+  [key: string]: unknown;
+};
+
+export type ZapryUpdate = {
+  update_id: number;
+  message?: ZapryMessage;
+  callback_query?: {
+    id: string;
+    from?: ZapryUser;
+    message?: ZapryMessage;
+    data?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
 export type ZaprySendOpts = {
   replyToMessageId?: string;
   messageThreadId?: string;

@@ -110,6 +110,8 @@ type ParsedInboundMessage = {
   targetUserHints: InboundTargetUserHint[];
   chatId: string;
   chatType?: string;
+  chatTitle?: string;
+  clubId?: string;
   isGroup: boolean;
   messageSid: string;
   timestampMs?: number;
@@ -2932,6 +2934,8 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     asNonEmptyString(message.sender_name);
 
   const chatType = asNonEmptyString(chat.type);
+  const chatTitle = asNonEmptyString(chat.title ?? chat.name);
+  const clubId = asNonEmptyString(chat.club_id ?? chat.clubId ?? message.club_id ?? message.clubId);
   const isGroup =
     chatType === "group" ||
     chatType === "supergroup" ||
@@ -2980,6 +2984,8 @@ function parseInboundMessage(update: any): ParsedInboundMessage | null {
     targetUserHints,
     chatId,
     chatType,
+    chatTitle,
+    clubId,
     isGroup,
     messageSid,
     timestampMs:
@@ -3392,8 +3398,8 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
 
   const fromLabel = parsed.isGroup
     ? parsed.chatType === "channel"
-      ? `channel:${parsed.chatId}`
-      : `group:${parsed.chatId}`
+      ? `channel:${parsed.chatTitle || parsed.chatId}`
+      : `group:${parsed.chatTitle || parsed.chatId}`
     : parsed.senderName || `user:${parsed.senderId}`;
 
   const body =
@@ -3417,7 +3423,17 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     To: `zapry:${parsed.chatId}`,
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
-    ChatType: parsed.isGroup ? "group" : "direct",
+    ChatType: parsed.isGroup ? parsed.chatType || "group" : "direct",
+    ChatId: parsed.chatId,
+    ChatTitle: parsed.chatTitle || undefined,
+    ClubId: parsed.clubId || undefined,
+    ClubID: parsed.clubId || undefined,
+    Chat: {
+      id: parsed.chatId,
+      type: parsed.chatType || (parsed.isGroup ? "group" : "private"),
+      title: parsed.chatTitle || undefined,
+      club_id: parsed.clubId || undefined,
+    },
     ConversationLabel: fromLabel,
     SenderName: parsed.senderName || undefined,
     SenderId: parsed.senderId,
@@ -3475,6 +3491,9 @@ export async function processZapryInboundUpdate(params: ProcessInboundParams): P
     sessionKey: String((ctxPayload as any).sessionKey ?? ctxPayload.SessionKey ?? route.sessionKey ?? "").trim(),
     accountId: account.accountId,
     chatId: parsed.chatId,
+    chatType: parsed.chatType,
+    chatTitle: parsed.chatTitle,
+    clubId: parsed.clubId,
   }, async () => {
     await dispatchReply({
       ctx: ctxPayload,

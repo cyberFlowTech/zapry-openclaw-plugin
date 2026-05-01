@@ -121,6 +121,17 @@ triggers_api:
 
 兼容别名（仅兼容，不作为主写法）：`chatId`、`userId`、`messageId`、`dynamicId`、`pageSize`、`languageCode`
 
+### 2.1) 入站聊天上下文
+
+收到 Zapry 入站消息时，优先使用可信上下文里的会话字段：
+
+- `ChatId` / `message.chat.id`：当前会话 ID，用于回复或群聊成员查询。
+- `ChatType` / `message.chat.type`：`private` / `group` / `channel`。俱乐部频道发言会是 `channel`。
+- `ChatTitle` / `message.chat.title`：群聊或频道标题，可能为空。
+- `ClubId` / `message.chat.club_id`：当前会话所属俱乐部 ID，仅俱乐部上下文存在。
+
+俱乐部成员管理动作必须使用 `club_id`。如果当前消息来自俱乐部频道，直接使用 `ClubId` / `message.chat.club_id`；不要把 `chat_id` 当作 `club_id`。
+
 ## 3) 媒体来源约束（必须遵守）
 
 发送媒体时（`photo` / `video` / `document` / `audio` / `voice` / `animation`），媒体字段支持：

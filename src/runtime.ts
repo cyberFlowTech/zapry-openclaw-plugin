@@ -8,6 +8,9 @@ export type ZaprySkillInvocationContext = {
   sessionKey?: string;
   accountId?: string;
   chatId?: string;
+  chatType?: string;
+  chatTitle?: string;
+  clubId?: string;
 };
 
 let _runtime: PluginRuntime | null = null;

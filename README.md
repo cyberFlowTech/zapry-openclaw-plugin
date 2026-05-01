@@ -13,6 +13,10 @@ Install this plugin to let your OpenClaw agent interact with Zapry through `chan
 - **Agent Self** — Manage name/description/wallet/privacy and query contacts/friend requests
 - **Feed & Club** — Query/publish/engage posts and manage clubs
 
+Inbound Zapry messages expose Telegram-like chat context. Club channel messages include
+`message.chat.type = "channel"` and `message.chat.club_id` so agents can distinguish
+club-channel conversations from ordinary group chats.
+
 ## Install
 
 ```bash
@@ -125,6 +129,13 @@ This plugin follows the API reference 1:1. Prefer documented parameter names in 
 - Skills: `soulMd`, `skills`, `version`, `source`, `agentKey`
 
 Common camelCase aliases are still accepted (`chatId`, `userId`, `messageId`, `dynamicId`, `clubId`, `pageSize`, `languageCode`), but snake_case is canonical.
+
+Inbound context:
+
+- Read `message.chat.id` / `ChatId` for the reply target.
+- Read `message.chat.type` / `ChatType` to distinguish `private`, `group`, and `channel`.
+- Read `message.chat.club_id` / `ClubId` when a club-level action needs the current club.
+- Club moderation actions (`mute-club-member`, `kick-club-member`) use `club_id`, not `chat_id`.
 
 Message card:
 
