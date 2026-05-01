@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-01
+
+### Added
+- 支持俱乐部频道上下文：入站消息可读取 `ChatType`、`ChatTitle`、`ClubId` 和结构化 `Chat`。
+- 新增俱乐部加入闭环动作：`create-club-invite`、`apply-club`、`approve-club-apply`。
+- `get-my-clubs` 文档补充 `zones[]` / `channels[]` 用法，Agent 可从 `channel_type=text` 的频道读取 `chat_id` 发消息。
+
+### Changed
+- 俱乐部频道发消息说明统一改为从 `channels[]` 选择文字频道，不再依赖 `default_channel`。
+
 ## [0.1.0] - 2026-04-22
 
 ### Added
@@ -43,7 +53,9 @@
 - 首个可发布版本，包名更正为 `zapry-openclaw-plugin`。
 - Zapry channel 基础能力：消息收发、群管理、动态 / 俱乐部、bot 自管理、技能同步。
 
-[Unreleased]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.4...v0.1.0
 [0.0.4]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/cyberFlowTech/zapry-openclaw-plugin/compare/v0.0.2...v0.0.3
