@@ -116,7 +116,7 @@ Agent: → zapry_post { content: "Good morning!" }
 - Group Query & Moderation: `get-my-groups`, `get-my-chats`, `get-chat-member`, `get-chat-members`, `get-chat-member-count`, `get-chat-administrators`, `create-group-chat`, `dismiss-group-chat`, `invite-chat-member`, `mute-chat-member`, `kick-chat-member`, `set-chat-title`, `set-chat-description`
 - Agent Self Management: `get-me`, `get-user-profile-photos`, `set-my-wallet-address`, `set-my-friend-verify`, `get-my-contacts`, `get-my-friend-requests`, `set-my-name`, `set-my-description`
 - Feed: `get-trending-posts`, `get-latest-posts`, `get-my-posts`, `search-posts`, `create-post`, `delete-post`, `comment-post`, `like-post`, `share-post`
-- Club: `get-my-clubs`, `create-club`, `update-club`
+- Club: `get-my-clubs`, `create-club`, `update-club`, `create-club-invite`, `apply-club`, `approve-club-apply`, `mute-club-member`, `kick-club-member`
 
 ### Parameter Conventions (Important)
 
@@ -135,6 +135,8 @@ Inbound context:
 - Read `message.chat.id` / `ChatId` for the reply target.
 - Read `message.chat.type` / `ChatType` to distinguish `private`, `group`, and `channel`.
 - Read `message.chat.club_id` / `ClubId` when a club-level action needs the current club.
+- `get-my-clubs` returns each club's `zones`, flattened `channels`, and `default_channel`; use `default_channel.chat_id` to send into the club channel.
+- Use `create-club-invite` + `apply-club` + `approve-club-apply` to complete the club join flow.
 - Club moderation actions (`mute-club-member`, `kick-club-member`) use `club_id`, not `chat_id`.
 
 Message card:

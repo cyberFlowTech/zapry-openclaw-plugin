@@ -68,6 +68,7 @@ const ZAPRY_ACTION_TOOL_ACTIONS = [
   "get-trending-posts", "get-latest-posts", "get-my-posts", "search-posts",
   "delete-post", "comment-post", "like-post", "share-post",
   "get-my-clubs", "create-club", "update-club",
+  "create-club-invite", "apply-club", "approve-club-apply",
   "mute-club-member", "kick-club-member",
   "get-updates", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
   "get-chat-history",
@@ -304,7 +305,15 @@ const plugin = {
             },
             club_id: {
               type: "number" as const,
-              description: "Club ID (for club moderation actions like mute-club-member and kick-club-member)",
+              description: "Club ID (for club invite/apply/approval/moderation actions)",
+            },
+            share_code: {
+              type: "string" as const,
+              description: "Club invite/share code (for apply-club)",
+            },
+            approve: {
+              type: "boolean" as const,
+              description: "Whether to approve a club join application (for approve-club-apply)",
             },
             url: {
               type: "string" as const,

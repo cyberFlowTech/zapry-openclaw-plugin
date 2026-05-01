@@ -25,7 +25,7 @@ triggers_api:
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
     "createPost", "deletePost", "commentPost", "likePost", "sharePost",
     "getTrendingPosts", "getLatestPosts", "getMyPosts", "searchPosts",
-    "getMyClubs", "createClub", "updateClub", "muteClubMember", "kickClubMember",
+    "getMyClubs", "createClub", "updateClub", "createClubInvite", "applyClub", "approveClubApply", "muteClubMember", "kickClubMember",
     "getMe", "getUserProfilePhotos", "setMyName", "setMyDescription", "setMyWalletAddress"
   ]
 ---
@@ -94,7 +94,7 @@ triggers_api:
 - 好友/联系人：`get-my-contacts` / `get-my-friend-requests` / `accept-friend-request` / `reject-friend-request` / `add-friend` / `delete-friend`
 - Bot 资料/配置：`get-me` / `get-my-profile` / `get-my-soul` / `set-my-soul` / `get-my-skills` / `set-my-skills` / `set-my-name` / `set-my-description` / `set-my-wallet-address` / `set-my-friend-verify`
 - 群组/会话/历史：`get-my-groups` / `get-my-chats` / `get-chat-history` / `get-chat-member` / `get-chat-members` / `get-chat-member-count` / `get-chat-administrators` / `create-group-chat` / `dismiss-group-chat` / `invite-chat-member` / `mute-chat-member` / `kick-chat-member` / `set-chat-title` / `set-chat-description`
-- Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `mute-club-member` / `kick-club-member` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
+- Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `create-club-invite` / `apply-club` / `approve-club-apply` / `mute-club-member` / `kick-club-member` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
 - 其他平台动作：任何通过 `zapry_action` 发起的跨聊天发送、平台查询、平台管理动作，默认都按 owner-only 处理
 
 **允许所有用户触发的，仅限当前轮对话所必需的行为：**
@@ -131,6 +131,8 @@ triggers_api:
 - `ClubId` / `message.chat.club_id`：当前会话所属俱乐部 ID，仅俱乐部上下文存在。
 
 俱乐部成员管理动作必须使用 `club_id`。如果当前消息来自俱乐部频道，直接使用 `ClubId` / `message.chat.club_id`；不要把 `chat_id` 当作 `club_id`。
+
+`get-my-clubs` 会返回俱乐部频道：优先读取 `default_channel.chat_id` 作为发消息目标；需要展示完整结构时读取 `zones[].channels[]` 或扁平化的 `channels[]`。
 
 ## 3) 媒体来源约束（必须遵守）
 
@@ -277,6 +279,9 @@ triggers_api:
 - `get-my-clubs`：可选 `page`, `page_size`
 - `create-club`：`name`；可选 `desc`, `avatar`
 - `update-club`：`club_id`；可选 `name`, `desc`, `avatar`
+- `create-club-invite`：`club_id`，返回 `share_code`
+- `apply-club`：`club_id`；可选 `message`, `share_code`
+- `approve-club-apply`：`club_id`, `user_id`, `approve`
 - `mute-club-member`：`club_id`, `user_id`, `mute`；当 `mute=true` 时必填 `duration_seconds`（秒，最大 2592000）；当 `mute=false` 时为立即解禁
 - `kick-club-member`：`club_id`, `user_id`
 

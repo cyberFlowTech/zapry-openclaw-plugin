@@ -407,6 +407,12 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(
         client.updateClub(normalized.club_id, normalized.name, normalized.desc, normalized.avatar),
       );
+    case "create-club-invite":
+      return wrap(client.createClubInvite(normalized.club_id));
+    case "apply-club":
+      return wrap(client.applyClub(normalized.club_id, normalized.message, normalized.share_code));
+    case "approve-club-apply":
+      return wrap(client.approveClubApply(normalized.club_id, normalized.user_id, normalized.approve === true));
     case "mute-club-member":
       return wrap(
         client.muteClubMember(
@@ -1176,6 +1182,9 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     // Club
     "create-club": ["name"],
     "update-club": ["club_id"],
+    "create-club-invite": ["club_id"],
+    "apply-club": ["club_id"],
+    "approve-club-apply": ["club_id", "user_id", "approve"],
     "mute-club-member": ["club_id", "user_id", "mute"],
     "kick-club-member": ["club_id", "user_id"],
   };
@@ -1328,6 +1337,7 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const pageSize = pickFirst(params, ["page_size", "pageSize"]);
   const dynamicId = pickFirst(params, ["dynamic_id", "dynamicId"]);
   const clubId = pickFirst(params, ["club_id", "clubId"]);
+  const shareCode = pickFirst(params, ["share_code", "shareCode"]);
   const soulMd = pickFirst(params, ["soulMd", "soul_md"]);
   const agentKey = pickFirst(params, ["agentKey", "agent_key"]);
   const skills = pickFirst(params, ["skills"]);
@@ -1378,6 +1388,7 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (pageSize !== undefined) params.page_size = toNumberIfPossible(pageSize);
   if (dynamicId !== undefined) params.dynamic_id = toNumberIfPossible(dynamicId);
   if (clubId !== undefined) params.club_id = toNumberIfPossible(clubId);
+  if (shareCode !== undefined) params.share_code = String(shareCode).trim();
   if (soulMd !== undefined) params.soulMd = String(soulMd);
   if (agentKey !== undefined) params.agentKey = String(agentKey).trim();
 

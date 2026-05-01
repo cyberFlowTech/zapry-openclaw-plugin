@@ -421,6 +421,18 @@ export class ZapryApiClient {
     return this.post("updateClub", { club_id: clubId, name, desc, avatar });
   }
 
+  async createClubInvite(clubId: number) {
+    return this.post("createClubInvite", { club_id: clubId });
+  }
+
+  async applyClub(clubId: number, message?: string, shareCode?: string) {
+    return this.post("applyClub", { club_id: clubId, message, share_code: shareCode });
+  }
+
+  async approveClubApply(clubId: number, userId: string, approve: boolean) {
+    return this.post("approveClubApply", { club_id: clubId, user_id: userId, approve });
+  }
+
   async muteClubMember(clubId: number, userId: string, mute: boolean, durationSeconds?: number) {
     return this.post("muteClubMember", {
       club_id: clubId,
