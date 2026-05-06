@@ -113,11 +113,15 @@ export class ZapryApiClient {
       replyToMessageId?: string;
       messageThreadId?: string;
       replyMarkup?: unknown;
+      mentionUserIds?: string[];
+      mentionNames?: string[];
     },
   ) {
     return this.post("sendMessage", {
       chat_id: chatId,
       text,
+      mention_user_ids: opts?.mentionUserIds,
+      mention_names: opts?.mentionNames,
       reply_to_message_id: opts?.replyToMessageId,
       message_thread_id: opts?.messageThreadId,
       reply_markup: opts?.replyMarkup,

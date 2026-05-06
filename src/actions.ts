@@ -208,6 +208,8 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
           replyToMessageId: normalized.reply_to_message_id,
           messageThreadId: normalized.message_thread_id,
           replyMarkup: normalized.reply_markup,
+          mentionUserIds: normalized.mention_user_ids,
+          mentionNames: normalized.mention_names,
         }),
       );
     case "send-message-card":
@@ -688,6 +690,8 @@ async function handleCoreSendCompat(
       replyToMessageId: params.reply_to_message_id,
       messageThreadId: params.message_thread_id,
       replyMarkup: params.reply_markup,
+      mentionUserIds: params.mention_user_ids,
+      mentionNames: params.mention_names,
     }),
   );
 }
@@ -1329,6 +1333,8 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const replyMarkup = pickFirst(params, ["reply_markup", "replyMarkup"]);
   const replyToMessageId = pickFirst(params, ["reply_to_message_id", "replyTo", "replyToMessageId"]);
   const messageThreadId = pickFirst(params, ["message_thread_id", "messageThreadId"]);
+  const mentionUserIds = pickFirst(params, ["mention_user_ids", "mentionUserIds", "mentioned_user_ids", "mentionedUserIds"]);
+  const mentionNames = pickFirst(params, ["mention_names", "mentionNames", "mentioned_names", "mentionedNames"]);
   const showAlert = pickFirst(params, ["show_alert", "showAlert"]);
   const mute = pickFirst(params, ["mute"]);
   const walletAddress = pickFirst(params, ["wallet_address", "walletAddress"]);
@@ -1380,6 +1386,8 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (replyMarkup !== undefined) params.reply_markup = replyMarkup;
   if (replyToMessageId !== undefined) params.reply_to_message_id = String(replyToMessageId).trim();
   if (messageThreadId !== undefined) params.message_thread_id = String(messageThreadId).trim();
+  if (mentionUserIds !== undefined) params.mention_user_ids = normalizeIdArray(mentionUserIds) ?? mentionUserIds;
+  if (mentionNames !== undefined) params.mention_names = normalizeIdArray(mentionNames) ?? mentionNames;
   if (showAlert !== undefined) params.show_alert = toBoolean(showAlert);
   if (mute !== undefined) params.mute = toBoolean(mute);
   if (walletAddress !== undefined) params.wallet_address = String(walletAddress).trim();

@@ -116,7 +116,7 @@ triggers_api:
 
 - `chat_id`, `club_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`
 - `page`, `page_size`, `language_code`, `wallet_address`, `need_verify`, `pending_only`
-- `text`, `url`, `title`, `content`, `icon_url`, `image_url`, `fallback_text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `images`
+- `text`, `mention_user_ids`, `mention_names`, `url`, `title`, `content`, `icon_url`, `image_url`, `fallback_text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `images`
 - `soulMd`, `skills`, `version`, `source`, `agentKey`
 
 兼容别名（仅兼容，不作为主写法）：`chatId`、`userId`、`messageId`、`dynamicId`、`pageSize`、`languageCode`
@@ -216,7 +216,7 @@ triggers_api:
 
 ### Messaging
 
-- `send-message`：`chat_id`, `text`；可选 `reply_markup`, `reply_to_message_id`, `message_thread_id`
+- `send-message`：`chat_id`, `text`；可选 `mention_user_ids`, `mention_names`, `reply_markup`, `reply_to_message_id`, `message_thread_id`
 - `send-message-card`：`chat_id`, `url`, `title`；可选 `content`, `text`, `icon_url`, `image_url`, `source`, `open_mode`, `fallback_text`, `extra`, `reply_markup`, `reply_to_message_id`, `message_thread_id`
 - `send-photo`：`chat_id`；可选 `photo`（图片源）或 `prompt`（文字描述，自动生成图片）
 - `send-video`：`chat_id`, `video`
@@ -264,6 +264,12 @@ triggers_api:
 
 #### 群管理执行补充（必须遵守）
 
+- 需要真正 @ 用户时，`send-message` 必须同时传：
+  - `text`：正文里包含 `@展示名`
+  - `mention_user_ids`：被 @ 用户 ID 数组
+  - `mention_names`：正文里的展示名数组，不带 `@`，顺序与 `mention_user_ids` 一致
+  示例：`{"action":"send-message","chat_id":"g_xxx","text":"@Alice 请看一下","mention_user_ids":["1001"],"mention_names":["Alice"]}`
+- 只在正文里写 `@Alice` 但不传 `mention_user_ids` / `mention_names`，客户端会按普通文本处理，不保证高亮和 @ 提醒。
 - `mute-chat-member` **只支持** `mute=true/false`；不支持 `until_date` / duration（10 分钟、1 小时、24 小时等）。
 - 禁止向用户提供时长选项（如"10分钟/1小时/24小时/永久"）并要求二选一。
 - 当上下文里有 `TargetUserId` / `TargetUserHints` / `MentionedUserIds` 时，优先直接使用这些 `user_id` 执行。

@@ -13,6 +13,50 @@ const account: ResolvedZapryAccount = {
   },
 };
 
+describe("messaging actions", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("passes mention metadata for send-message", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: "msg_at_1" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "send-message",
+      channel: "zapry",
+      account,
+      params: {
+        chat_id: "g_117780746111170006",
+        text: "@安卓-三星 hello",
+        mention_user_ids: ["849695"],
+        mention_names: ["安卓-三星"],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openapi.example.test/TOKEN/sendMessage",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          chat_id: "g_117780746111170006",
+          text: "@安卓-三星 hello",
+          mention_user_ids: ["849695"],
+          mention_names: ["安卓-三星"],
+          reply_to_message_id: undefined,
+          message_thread_id: undefined,
+          reply_markup: undefined,
+        }),
+      }),
+    );
+  });
+});
+
 describe("club moderation actions", () => {
   afterEach(() => {
     vi.restoreAllMocks();

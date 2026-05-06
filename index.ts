@@ -303,6 +303,16 @@ const plugin = {
               type: "string" as const,
               description: "Chat/group ID (for group management actions like get-chat-members, invite-chat-member, kick-chat-member, dismiss-group-chat, etc.)",
             },
+            mention_user_ids: {
+              type: "array" as const,
+              items: { type: "string" as const },
+              description: "User IDs to @ mention for send-message. Must align with mention_names.",
+            },
+            mention_names: {
+              type: "array" as const,
+              items: { type: "string" as const },
+              description: "Display names used in send-message text, without @. Same order as mention_user_ids.",
+            },
             club_id: {
               type: "number" as const,
               description: "Club ID (for club invite/apply/approval/moderation actions)",
