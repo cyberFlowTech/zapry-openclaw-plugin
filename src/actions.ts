@@ -24,11 +24,11 @@ export type ActionResult = {
 const ACTION_ALIASES: Record<string, string> = {
   send: "send",
   sendmessage: "send-message",
-  sendmessagecard: "send-message-card",
-  sendcard: "send-message-card",
-  sendlinkcard: "send-message-card",
-  sendlinksharecard: "send-message-card",
-  sendlinkshare: "send-message-card",
+  sendmessagecard: "send-link-card",
+  sendcard: "send-link-card",
+  sendlinkcard: "send-link-card",
+  sendlinksharecard: "send-link-card",
+  sendlinkshare: "send-link-card",
   sendphoto: "send-photo",
   sendvideo: "send-video",
   senddocument: "send-document",
@@ -212,9 +212,10 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
           mentionNames: normalized.mention_names,
         }),
       );
+    case "send-link-card":
     case "send-message-card":
       return wrap(
-        client.sendMessageCard({
+        client.sendLinkCard({
           chatId: normalized.chat_id,
           url: normalized.url,
           title: normalized.title,
@@ -1130,6 +1131,7 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
   const requiredByAction: Record<string, string[]> = {
     // Messaging
     "send-message": ["chat_id", "text"],
+    "send-link-card": ["chat_id", "url", "title"],
     "send-message-card": ["chat_id", "url", "title"],
     "send-photo": ["chat_id"],
     "send-video": ["chat_id", "video"],

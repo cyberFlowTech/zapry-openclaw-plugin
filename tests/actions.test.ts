@@ -55,6 +55,62 @@ describe("messaging actions", () => {
       }),
     );
   });
+
+  it("dispatches send-link-card to the new OpenAPI endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: "msg_link_1" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "send-link-card",
+      channel: "zapry",
+      account,
+      params: {
+        chat_id: "g_1",
+        url: "https://zapry.ai/developers",
+        title: "Zapry Developers",
+        content: "Build agents on Zapry",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openapi.example.test/TOKEN/sendLinkCard",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"url":"https://zapry.ai/developers"'),
+      }),
+    );
+  });
+
+  it("keeps send-message-card as a compatibility alias", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: "msg_link_2" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "send-message-card",
+      channel: "zapry",
+      account,
+      params: {
+        chat_id: "g_1",
+        url: "https://zapry.ai/developers",
+        title: "Zapry Developers",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openapi.example.test/TOKEN/sendLinkCard",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });
 
 describe("club moderation actions", () => {
