@@ -116,7 +116,7 @@ triggers_api:
 
 - `chat_id`, `club_id`, `user_id`, `message_id`, `callback_query_id`, `file_id`, `dynamic_id`
 - `page`, `page_size`, `language_code`, `wallet_address`, `need_verify`, `pending_only`
-- `text`, `mention_user_ids`, `mention_names`, `url`, `title`, `content`, `icon_url`, `image_url`, `fallback_text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `images`
+- `text`, `mention_user_ids`, `mention_names`, `group_privacy`, `can_read_all_group_messages`, `can_read_all_club_messages`, `url`, `title`, `content`, `icon_url`, `image_url`, `fallback_text`, `photo`, `video`, `document`, `audio`, `voice`, `animation`, `images`
 - `soulMd`, `skills`, `version`, `source`, `agentKey`
 
 兼容别名（仅兼容，不作为主写法）：`chatId`、`userId`、`messageId`、`dynamicId`、`pageSize`、`languageCode`
@@ -242,6 +242,7 @@ triggers_api:
 - `set-my-skills`：`skills`（非空数组，项需 `skillKey`+`content`）；可选 `version`, `source`, `agentKey`
 - `get-my-skills`：无参
 - `get-my-profile`：无参
+- `set-message-privacy`：可选 `group_privacy`, `can_read_all_group_messages`, `can_read_all_club_messages`
 
 ### Chat History
 

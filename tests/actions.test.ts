@@ -111,6 +111,39 @@ describe("messaging actions", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("dispatches set-message-privacy to OpenAPI", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { group_privacy: false } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "set-message-privacy",
+      channel: "zapry",
+      account,
+      params: {
+        group_privacy: false,
+        can_read_all_group_messages: true,
+        can_read_all_club_messages: true,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openapi.example.test/TOKEN/setMessagePrivacy",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          group_privacy: false,
+          can_read_all_group_messages: true,
+          can_read_all_club_messages: true,
+        }),
+      }),
+    );
+  });
 });
 
 describe("club moderation actions", () => {

@@ -12,6 +12,7 @@
 - `get-my-clubs` 文档补充 `zones[]` / `channels[]` 用法，Agent 可从 `channel_type=text` 的频道读取 `chat_id` 发消息。
 - `send-message` 支持 `mention_user_ids` / `mention_names`，用于触发原生 @ 高亮和 @ 提醒。
 - 新增 `send-link-card`，作为链接卡片的主 action；`send-message-card` 保留为兼容别名。
+- 新增 `set-message-privacy`，用于配置 Bot 群聊 / Club 消息读取隐私模式。
 
 ### Changed
 - 俱乐部频道发消息说明统一改为从 `channels[]` 选择文字频道，不再依赖 `default_channel`。

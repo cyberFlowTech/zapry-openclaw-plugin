@@ -345,6 +345,18 @@ export class ZapryApiClient {
     return this.post("setMyFriendVerify", { need_verify: needVerify });
   }
 
+  async setMessagePrivacy(payload: {
+    groupPrivacy?: boolean;
+    canReadAllGroupMessages?: boolean;
+    canReadAllClubMessages?: boolean;
+  }) {
+    return this.post("setMessagePrivacy", {
+      group_privacy: payload.groupPrivacy,
+      can_read_all_group_messages: payload.canReadAllGroupMessages,
+      can_read_all_club_messages: payload.canReadAllClubMessages,
+    });
+  }
+
   async getMyContacts(page?: number, pageSize?: number) {
     return this.post("getMyContacts", { page, page_size: pageSize });
   }

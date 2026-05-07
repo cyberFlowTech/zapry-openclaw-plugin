@@ -72,6 +72,7 @@ const ACTION_ALIASES: Record<string, string> = {
   getuserprofilephotos: "get-user-profile-photos",
   setmywalletaddress: "set-my-wallet-address",
   setmyfriendverify: "set-my-friend-verify",
+  setmessageprivacy: "set-message-privacy",
   getmycontacts: "get-my-contacts",
   getmyfriendrequests: "get-my-friend-requests",
   acceptfriendrequest: "accept-friend-request",
@@ -437,6 +438,12 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.setMyWalletAddress(normalized.wallet_address));
     case "set-my-friend-verify":
       return wrap(client.setMyFriendVerify(normalized.need_verify));
+    case "set-message-privacy":
+      return wrap(client.setMessagePrivacy({
+        groupPrivacy: normalized.group_privacy,
+        canReadAllGroupMessages: normalized.can_read_all_group_messages,
+        canReadAllClubMessages: normalized.can_read_all_club_messages,
+      }));
     case "get-my-contacts":
       return wrap(client.getMyContacts(normalized.page, normalized.page_size));
     case "get-my-friend-requests":
@@ -1341,6 +1348,9 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   const mute = pickFirst(params, ["mute"]);
   const walletAddress = pickFirst(params, ["wallet_address", "walletAddress"]);
   const needVerify = pickFirst(params, ["need_verify", "needVerify", "friend_verify"]);
+  const groupPrivacy = pickFirst(params, ["group_privacy", "groupPrivacy"]);
+  const canReadAllGroupMessages = pickFirst(params, ["can_read_all_group_messages", "canReadAllGroupMessages"]);
+  const canReadAllClubMessages = pickFirst(params, ["can_read_all_club_messages", "canReadAllClubMessages"]);
   const pendingOnly = pickFirst(params, ["pending_only", "pendingOnly"]);
   const pageSize = pickFirst(params, ["page_size", "pageSize"]);
   const dynamicId = pickFirst(params, ["dynamic_id", "dynamicId"]);
@@ -1394,6 +1404,9 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
   if (mute !== undefined) params.mute = toBoolean(mute);
   if (walletAddress !== undefined) params.wallet_address = String(walletAddress).trim();
   if (needVerify !== undefined) params.need_verify = toBoolean(needVerify);
+  if (groupPrivacy !== undefined) params.group_privacy = toBoolean(groupPrivacy);
+  if (canReadAllGroupMessages !== undefined) params.can_read_all_group_messages = toBoolean(canReadAllGroupMessages);
+  if (canReadAllClubMessages !== undefined) params.can_read_all_club_messages = toBoolean(canReadAllClubMessages);
   if (pendingOnly !== undefined) params.pending_only = toBoolean(pendingOnly);
   if (pageSize !== undefined) params.page_size = toNumberIfPossible(pageSize);
   if (dynamicId !== undefined) params.dynamic_id = toNumberIfPossible(dynamicId);

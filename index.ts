@@ -61,7 +61,7 @@ const ZAPRY_ACTION_TOOL_ACTIONS = [
   "get-chat-member", "get-chat-members", "get-chat-member-count", "get-chat-administrators",
   "create-group-chat", "dismiss-group-chat", "invite-chat-member",
   "mute-chat-member", "kick-chat-member", "set-chat-title", "set-chat-description",
-  "get-user-profile-photos", "set-my-wallet-address", "set-my-friend-verify",
+  "get-user-profile-photos", "set-my-wallet-address", "set-my-friend-verify", "set-message-privacy",
   "get-my-contacts", "get-my-friend-requests",
   "accept-friend-request", "reject-friend-request", "add-friend", "delete-friend",
   "set-my-soul", "get-my-soul", "set-my-skills", "get-my-skills",
@@ -431,6 +431,18 @@ const plugin = {
             duration_seconds: {
               type: "number" as const,
               description: "Mute duration in seconds for mute-club-member when mute=true. Maximum 2592000.",
+            },
+            group_privacy: {
+              type: "boolean" as const,
+              description: "Message privacy mode. true means only @/commands/replies; false allows authorized all-message delivery.",
+            },
+            can_read_all_group_messages: {
+              type: "boolean" as const,
+              description: "Allow the Bot to receive all ordinary group messages when authorized.",
+            },
+            can_read_all_club_messages: {
+              type: "boolean" as const,
+              description: "Allow the Bot to receive all Club channel messages when authorized.",
             },
           },
           required: ["action"],
