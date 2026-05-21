@@ -215,7 +215,7 @@ const plugin = {
         label: "Zapry Post to Feed",
         description:
           "Post to Zapry public feed (广场). This is the ONLY way to create a feed post. " +
-          "Pass content and optionally images. No target or routing needed.",
+          "Pass content and optionally images or videos. No target or routing needed.",
         parameters: {
           type: "object" as const,
           properties: {
@@ -232,6 +232,12 @@ const plugin = {
               items: { type: "string" as const },
               description:
                 "Array of image sources: local file paths, data: URIs, HTTP(S) URLs, or Zapry file IDs (mf_*)",
+            },
+            videos: {
+              type: "array" as const,
+              items: { type: "string" as const },
+              description:
+                "Array of video sources: local file paths, data: URIs, HTTP(S) URLs, or Zapry file IDs (mf_*)",
             },
           },
           required: ["content"],
@@ -251,7 +257,7 @@ const plugin = {
               action: "create-post",
               channel: "zapry",
               account,
-              params: { content: args.content, images: args.images },
+              params: { content: args.content, images: args.images, videos: args.videos },
               requestHeaders: resolveToolRequestHeaders(toolCtx),
             });
             return JSON.stringify(result, null, 2);

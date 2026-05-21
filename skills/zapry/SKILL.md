@@ -36,7 +36,7 @@ triggers_api:
 
 - `message`: 仅用于最简单的纯文本回复/发送，不承载任何 Zapry 平台 action
 - `zapry_action`: **唯一用于 Zapry 平台动作**，包括发文字（`send-message`）、发送链接卡片（`send-link-card`）、图片、视频、音频、文件、文档，以及所有查询/管理能力。**支持群名自动解析**——直接传群名即可，无需手动查 ID。发送文件用 `action: "send-document"`
-- `zapry_post`: 发广场动态（create-post），传 `content`，可选 `images`
+- `zapry_post`: 发广场动态（create-post），传 `content`，可选 `images` / `videos`
 - `pdf`: 创建 / 分析 PDF 文件。创建后用 `zapry_action send-document` 发送到聊天
 
 ## 路由规则（必须遵守）
@@ -147,7 +147,7 @@ triggers_api:
 **重要**：你可以直接传入互联网媒体 URL（如 `https://example.com/video.mp4`），插件会自动处理下载和上传，无需手动操作。
 
 补充：
-- `create-post` 的 `images` 还额外支持 Zapry file_id（如 `mf_*`，自动解析为下载 URL）。
+- `create-post` 的 `images` / `videos` 还额外支持 Zapry file_id（如 `mf_*`，自动解析为下载 URL）。
 - 若本地路径不可读、外链下载失败、文件超限，会在插件侧直接报错并拒绝该媒体。
 
 ## 3.0) 文档制作与发送（必须遵守）
@@ -321,8 +321,9 @@ triggers_api:
 
 **`create-post` 直接发到公共广场（Feed），无需指定目标。不存在"发到个人主页"或"发到俱乐部"的选项。禁止询问用户"发到哪里"，收到发帖指令后直接执行。**
 
-- `create-post`：必填 `content`；可选 `images`（支持本地路径 / `data:` / `/_temp/media` / 外部 HTTP(S) 图片 URL / Zapry file_id 如 `mf_*`，外链自动下载转换，file_id 自动解析）
+- `create-post`：必填 `content`；可选 `images` / `videos`（支持本地路径 / `data:` / `/_temp/media` / 外部 HTTP(S) URL / Zapry file_id 如 `mf_*`，外链自动下载转换，file_id 自动解析）
 - `images` 支持多种格式：字符串数组 `["url1","url2"]`、对象数组 `[{"fileId":"mf_..."}]`、单个字符串均可
+- `videos` 支持同样的数组/对象/单字符串格式，视频源会作为广场视频媒体发布
 - 入站消息含图片附件时，直接使用附件的本地路径（如 `/Users/.../original---xxx.png`）作为 `images`，无需先调 `get-file`
 - 当用户要求"带图/配图/发图片动态"或入站上下文已包含图片附件时，`images` 视为**条件必填**，禁止静默降级为纯文字
 - 若无法提取到合法图片来源，先告知"当前缺少可用图片源"，请求重发或确认纯文字

@@ -407,8 +407,8 @@ export class ZapryApiClient {
     return this.post("searchPosts", { keyword, page, page_size: pageSize });
   }
 
-  async createPost(content: string, images?: string[]): Promise<ZapryApiResponse<CreatePostResponse>> {
-    return this.post("createPost", { content, images });
+  async createPost(content: string, images?: string[], videos?: string[]): Promise<ZapryApiResponse<CreatePostResponse>> {
+    return this.post("createPost", { content, images, videos });
   }
 
   async deletePost(dynamicId: number) {

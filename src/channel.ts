@@ -136,7 +136,7 @@ export const zapryPlugin = {
       `To send video/audio/document: use "zapry_action" with send-video/send-audio/send-document. ` +
       `To manage groups: use "zapry_action" with create-group-chat, invite-chat-member, kick-chat-member, or dismiss-group-chat. ` +
       `IMPORTANT: Do NOT use "message" tool for Zapry group chats — it cannot resolve group names. Always use zapry_action instead. ` +
-      `To publish to feed (广场), use "zapry_post" with content and optional images.`,
+      `To publish to feed (广场), use "zapry_post" with content and optional images or videos.`,
     ],
   },
 

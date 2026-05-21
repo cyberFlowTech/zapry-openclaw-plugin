@@ -118,6 +118,12 @@ const CREATE_POST_COMPAT_PARAM_KEYS = [
   "image",
   "image_url",
   "imageUrl",
+  "videos",
+  "video",
+  "video_url",
+  "videoUrl",
+  "video_urls",
+  "videoUrls",
   "photo",
   "photos",
   "media",
@@ -155,6 +161,7 @@ type GeneratedAudioArtifact = {
 
 type MaterializeMediaOptions = {
   allowExternalHttpImages?: boolean;
+  allowExternalHttpVideos?: boolean;
   sourceLabel?: string;
 };
 
@@ -373,13 +380,18 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.searchPosts(normalized.keyword, normalized.page, normalized.page_size));
     case "create-post": {
       let resolvedImages: string[] | undefined;
+      let resolvedVideos: string[] | undefined;
       try {
         resolvedImages = await materializeCreatePostImages(normalized.images, client);
+        resolvedVideos = await materializeCreatePostVideos(normalized.videos, client);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "failed to process create-post images";
+        const message = err instanceof Error ? err.message : "failed to process create-post media";
         return { ok: false, error: message };
       }
-      if (!resolvedImages || resolvedImages.length === 0) {
+      if (
+        (!resolvedImages || resolvedImages.length === 0) &&
+        (!resolvedVideos || resolvedVideos.length === 0)
+      ) {
         const generated = generateTextCardImageDataURI(normalized.content);
         resolvedImages = [generated];
       }
@@ -387,7 +399,11 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       if (imageErr) {
         return { ok: false, error: imageErr };
       }
-      return wrap(client.createPost(normalized.content, resolvedImages));
+      const videoErr = validateCreatePostVideoSources(resolvedVideos);
+      if (videoErr) {
+        return { ok: false, error: videoErr };
+      }
+      return wrap(client.createPost(normalized.content, resolvedImages, resolvedVideos));
     }
     case "delete-post":
       return wrap(client.deletePost(normalized.dynamic_id));
@@ -751,6 +767,10 @@ async function materializeSendMediaSource(
       const sourceLabel = options.sourceLabel ?? "image";
       return downloadExternalImageAsDataURI(source, sourceLabel);
     }
+    if (options?.allowExternalHttpVideos && /^https?:\/\//i.test(source)) {
+      const sourceLabel = options.sourceLabel ?? "video";
+      return downloadExternalVideoAsDataURI(source, sourceLabel);
+    }
     return source;
   }
 
@@ -789,6 +809,43 @@ async function downloadExternalImageAsDataURI(source: string, sourceLabel: strin
     if (isAbortError(err)) {
       throw new Error(
         `${sourceLabel} download timed out after ${EXTERNAL_IMAGE_FETCH_TIMEOUT_MS}ms`,
+      );
+    }
+    if (err instanceof Error) {
+      throw new Error(`${sourceLabel} download failed: ${err.message}`);
+    }
+    throw new Error(`${sourceLabel} download failed`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function downloadExternalVideoAsDataURI(source: string, sourceLabel: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EXTERNAL_MEDIA_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(source, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const contentType = normalizeContentType(response.headers.get("content-type"));
+    const fallbackMime = inferMimeTypeFromPath(source);
+    const mime = contentType || fallbackMime;
+    if (!mime.startsWith("video/")) {
+      throw new Error(`content-type ${JSON.stringify(mime)} is not video/*`);
+    }
+
+    const binary = await readResponseBodyWithSizeLimit(response, MAX_EXTERNAL_MEDIA_BYTES);
+    return `data:${mime};base64,${binary.toString("base64")}`;
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error(
+        `${sourceLabel} download timed out after ${EXTERNAL_MEDIA_FETCH_TIMEOUT_MS}ms`,
       );
     }
     if (err instanceof Error) {
@@ -927,7 +984,7 @@ function pngChunk(type: string, data: Buffer): Buffer {
 function extractImageSource(item: unknown): string | null {
   if (typeof item === "string" && item.trim().length > 0) return item.trim();
   if (item && typeof item === "object") {
-    for (const key of ["fileId", "file_id", "url", "source", "src", "path", "uri"]) {
+    for (const key of ["fileId", "file_id", "url", "source", "src", "path", "uri", "video", "video_url", "videoUrl"]) {
       const val = (item as Record<string, unknown>)[key];
       if (typeof val === "string" && val.trim().length > 0) return val.trim();
     }
@@ -972,6 +1029,43 @@ async function materializeCreatePostImages(
   return resolved.filter((item): item is string => isNonEmptyString(item));
 }
 
+async function materializeCreatePostVideos(
+  rawVideos: unknown,
+  client?: { getFile: (fileId: string) => Promise<any> },
+): Promise<string[] | undefined> {
+  let videos: unknown[];
+  if (Array.isArray(rawVideos)) {
+    videos = rawVideos;
+  } else if (typeof rawVideos === "string" && rawVideos.trim().length > 0) {
+    videos = [rawVideos];
+  } else {
+    return undefined;
+  }
+  const resolved = await Promise.all(videos.map(async (item: unknown, idx: number) => {
+    let source = extractImageSource(item);
+    if (!source) return null;
+
+    if (client && /^mf_[0-9a-f]+$/i.test(source)) {
+      try {
+        const fileResp = await client.getFile(source);
+        const fileUrl =
+          fileResp?.result?.file_url ??
+          fileResp?.result?.file_path ??
+          fileResp?.result?.url;
+        if (typeof fileUrl === "string" && fileUrl.trim().length > 0) {
+          source = fileUrl.trim();
+        }
+      } catch {}
+    }
+
+    return materializeSendMediaSource(source, {
+      allowExternalHttpVideos: true,
+      sourceLabel: `videos[${idx}]`,
+    });
+  }));
+  return resolved.filter((item): item is string => isNonEmptyString(item));
+}
+
 function validateCreatePostImageSources(images: string[] | undefined): string | null {
   if (!images || images.length === 0) {
     return null;
@@ -982,6 +1076,22 @@ function validateCreatePostImageSources(images: string[] | undefined): string | 
       return (
         `invalid create-post images: ${mediaErr} ` +
         "(tip: provide local file path, data URI, /_temp/media URL, or external image URL)"
+      );
+    }
+  }
+  return null;
+}
+
+function validateCreatePostVideoSources(videos: string[] | undefined): string | null {
+  if (!videos || videos.length === 0) {
+    return null;
+  }
+  for (let idx = 0; idx < videos.length; idx += 1) {
+    const mediaErr = validateMediaSource(videos[idx], `videos[${idx}]`);
+    if (mediaErr) {
+      return (
+        `invalid create-post videos: ${mediaErr} ` +
+        "(tip: provide local file path, data URI, /_temp/media URL, or external video URL)"
       );
     }
   }
@@ -1378,6 +1488,14 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
     "fileIds",
     "file_ids",
   ]);
+  const videos = pickFirst(params, [
+    "videos",
+    "video",
+    "video_url",
+    "videoUrl",
+    "video_urls",
+    "videoUrls",
+  ]);
   const prompt = pickFirst(params, ["prompt", "audio_prompt", "audioPrompt", "script"]);
   const audioMode = pickFirst(params, ["audio_mode", "audioMode", "generate_mode", "generateMode"]);
   const ttsVoice = pickFirst(params, ["tts_voice", "ttsVoice", "voice_name", "voiceName"]);
@@ -1527,6 +1645,12 @@ function normalizeActionParams(action: string, raw: Record<string, any>): Record
       params.images = normalizedImages;
     }
   }
+  if (videos !== undefined) {
+    const normalizedVideos = normalizeStringArray(videos);
+    if (normalizedVideos) {
+      params.videos = normalizedVideos;
+    }
+  }
 
   // For query-style actions, keep plain endpoint behavior and avoid over-coercion.
   if (action === "get-user-profile-photos" && params.user_id !== undefined) {
@@ -1656,7 +1780,19 @@ function toMediaSourceString(value: unknown): string | null {
     return null;
   }
   const record = value as Record<string, unknown>;
-  const source = pickFirst(record, ["url", "uri", "src", "path", "file", "image", "image_url", "imageUrl"]);
+  const source = pickFirst(record, [
+    "url",
+    "uri",
+    "src",
+    "path",
+    "file",
+    "image",
+    "image_url",
+    "imageUrl",
+    "video",
+    "video_url",
+    "videoUrl",
+  ]);
   if (typeof source === "string") {
     const trimmed = source.trim();
     return trimmed.length > 0 ? trimmed : null;

@@ -236,3 +236,74 @@ describe("club moderation actions", () => {
     );
   });
 });
+
+describe("feed actions", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("passes create-post videos to OpenAPI without generating a fallback image", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { dynamic_id: 123 } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "create-post",
+      channel: "zapry",
+      account,
+      params: {
+        content: "video post",
+        videos: ["data:video/mp4;base64,AAAA"],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init).toEqual(expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(String(init?.body))).toEqual({
+      content: "video post",
+      videos: ["data:video/mp4;base64,AAAA"],
+    });
+  });
+
+  it("materializes external create-post video URLs before calling OpenAPI", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "https://cdn.example.test/clip.mp4") {
+        return new Response(Buffer.from("fake-video"), {
+          status: 200,
+          headers: { "Content-Type": "video/mp4" },
+        });
+      }
+      if (url === "https://openapi.example.test/TOKEN/createPost") {
+        return new Response(JSON.stringify({ ok: true, result: { dynamic_id: 124 } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch ${url} ${JSON.stringify(init)}`);
+    });
+
+    const result = await handleZapryAction({
+      action: "create-post",
+      channel: "zapry",
+      account,
+      params: {
+        content: "external video post",
+        videos: ["https://cdn.example.test/clip.mp4"],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, createInit] = fetchMock.mock.calls[1];
+    expect(JSON.parse(String(createInit?.body))).toEqual({
+      content: "external video post",
+      videos: ["data:video/mp4;base64,ZmFrZS12aWRlbw=="],
+    });
+  });
+});

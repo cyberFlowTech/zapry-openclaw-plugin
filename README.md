@@ -188,8 +188,8 @@ Group moderation note:
 Media source constraint (important):
 
 - For media send actions, use only `data:` URI or `/_temp/media/...` (or absolute URL ending with `/_temp/media/...`).
-- `create-post` images follow the same rule; local file paths are auto-converted to `data:` URI by this plugin.
-- Raw external file/image URLs are rejected by Zapry OpenAPI and will return `400`.
+- `create-post` images and videos follow the same rule; local file paths are auto-converted to `data:` URI by this plugin.
+- Raw external file/image/video URLs are rejected by Zapry OpenAPI and will return `400`.
 
 Audio generation helper:
 
