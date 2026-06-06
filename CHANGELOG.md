@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added
+- 新增 `leave-club` / `quit-club` 动作，让当前 Bot 以自己身份退出指定俱乐部。
+
 ## [0.1.2] - 2026-05-01
 
 ### Added

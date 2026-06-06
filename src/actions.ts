@@ -100,6 +100,8 @@ const ACTION_ALIASES: Record<string, string> = {
   getmyclubs: "get-my-clubs",
   createclub: "create-club",
   updateclub: "update-club",
+  leaveclub: "leave-club",
+  quitclub: "leave-club",
   muteclubmember: "mute-club-member",
   unmuteclubmember: "mute-club-member",
   kickclubmember: "kick-club-member",
@@ -433,6 +435,9 @@ export async function handleZapryAction(ctx: ActionContext): Promise<ActionResul
       return wrap(client.applyClub(normalized.club_id, normalized.message, normalized.share_code));
     case "approve-club-apply":
       return wrap(client.approveClubApply(normalized.club_id, normalized.user_id, normalized.approve === true));
+    case "leave-club":
+    case "quit-club":
+      return wrap(client.leaveClub(normalized.club_id));
     case "mute-club-member":
       return wrap(
         client.muteClubMember(
@@ -1308,6 +1313,8 @@ function validateRequiredParams(action: string, params: Record<string, any>): st
     "create-club-invite": ["club_id"],
     "apply-club": ["club_id"],
     "approve-club-apply": ["club_id", "user_id", "approve"],
+    "leave-club": ["club_id"],
+    "quit-club": ["club_id"],
     "mute-club-member": ["club_id", "user_id", "mute"],
     "kick-club-member": ["club_id", "user_id"],
   };

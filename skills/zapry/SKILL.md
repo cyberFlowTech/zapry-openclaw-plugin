@@ -25,7 +25,7 @@ triggers_api:
     "setMySoul", "getMySoul", "setMySkills", "getMySkills", "getMyProfile",
     "createPost", "deletePost", "commentPost", "likePost", "sharePost",
     "getTrendingPosts", "getLatestPosts", "getMyPosts", "searchPosts",
-    "getMyClubs", "createClub", "updateClub", "createClubInvite", "applyClub", "approveClubApply", "muteClubMember", "kickClubMember",
+    "getMyClubs", "createClub", "updateClub", "createClubInvite", "applyClub", "approveClubApply", "leaveClub", "quitClub", "muteClubMember", "kickClubMember",
     "getMe", "getUserProfilePhotos", "setMyName", "setMyDescription", "setMyWalletAddress"
   ]
 ---
@@ -94,7 +94,7 @@ triggers_api:
 - 好友/联系人：`get-my-contacts` / `get-my-friend-requests` / `accept-friend-request` / `reject-friend-request` / `add-friend` / `delete-friend`
 - Bot 资料/配置：`get-me` / `get-my-profile` / `get-my-soul` / `set-my-soul` / `get-my-skills` / `set-my-skills` / `set-my-name` / `set-my-description` / `set-my-wallet-address` / `set-my-friend-verify`
 - 群组/会话/历史：`get-my-groups` / `get-my-chats` / `get-chat-history` / `get-chat-member` / `get-chat-members` / `get-chat-member-count` / `get-chat-administrators` / `create-group-chat` / `dismiss-group-chat` / `invite-chat-member` / `mute-chat-member` / `kick-chat-member` / `set-chat-title` / `set-chat-description`
-- Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `create-club-invite` / `apply-club` / `approve-club-apply` / `mute-club-member` / `kick-club-member` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
+- Feed / Club / Webhook：`zapry_post`、`create-post` / `delete-post` / `comment-post` / `like-post` / `share-post` / `get-trending-posts` / `get-latest-posts` / `get-my-posts` / `search-posts` / `get-my-clubs` / `create-club` / `update-club` / `create-club-invite` / `apply-club` / `approve-club-apply` / `leave-club` / `quit-club` / `mute-club-member` / `kick-club-member` / `set-webhook` / `get-webhook-info` / `delete-webhook` / `webhooks-token`
 - 其他平台动作：任何通过 `zapry_action` 发起的跨聊天发送、平台查询、平台管理动作，默认都按 owner-only 处理
 
 **允许所有用户触发的，仅限当前轮对话所必需的行为：**
@@ -290,6 +290,7 @@ triggers_api:
 - `create-club-invite`：`club_id`，返回 `share_code`
 - `apply-club`：`club_id`；可选 `message`, `share_code`
 - `approve-club-apply`：`club_id`, `user_id`, `approve`
+- `leave-club` / `quit-club`：`club_id`；让当前 bot 自己退出该俱乐部
 - `mute-club-member`：`club_id`, `user_id`, `mute`；当 `mute=true` 时必填 `duration_seconds`（秒，最大 2592000）；当 `mute=false` 时为立即解禁
 - `kick-club-member`：`club_id`, `user_id`
 
@@ -300,6 +301,7 @@ triggers_api:
 - 邀请/加入闭环：owner 调 `create-club-invite` 获取 `share_code`；成员调 `apply-club` 并传 `share_code`；如果 `is_pass=false`，owner 再调 `approve-club-apply`。
 - 俱乐部禁言支持时长，用户说"禁言 10 分钟/1 小时/24 小时"时换算成 `duration_seconds` 后调用 `mute-club-member`。
 - 用户说"解禁俱乐部成员"时调用 `mute-club-member` 且传 `mute=false`，不要传 `duration_seconds`。
+- 当前 bot 要退出俱乐部时调用 `leave-club`（`quit-club` 只是同义别名），不要用 `kick-club-member` 自踢。
 - 俱乐部踢人调用 `kick-club-member`，不要用群聊的 `kick-chat-member` 替代。
 
 ### Agent Self Management

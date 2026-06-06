@@ -70,6 +70,7 @@ const ZAPRY_ACTION_TOOL_ACTIONS = [
   "delete-post", "comment-post", "like-post", "share-post",
   "get-my-clubs", "create-club", "update-club",
   "create-club-invite", "apply-club", "approve-club-apply",
+  "leave-club", "quit-club",
   "mute-club-member", "kick-club-member",
   "get-updates", "set-webhook", "get-webhook-info", "delete-webhook", "webhooks-token",
   "get-chat-history",
@@ -322,7 +323,7 @@ const plugin = {
             },
             club_id: {
               type: "number" as const,
-              description: "Club ID (for club invite/apply/approval/moderation actions)",
+              description: "Club ID (for club invite/apply/approval/leave/moderation actions)",
             },
             share_code: {
               type: "string" as const,

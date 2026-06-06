@@ -235,6 +235,64 @@ describe("club moderation actions", () => {
       }),
     );
   });
+
+  it("dispatches leave-club to the OpenAPI endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { club_id: 42, user_id: "900000143", left: true } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "leave-club",
+      channel: "zapry",
+      account,
+      params: {
+        clubId: "42",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openapi.example.test/TOKEN/leaveClub",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          club_id: 42,
+        }),
+      }),
+    );
+  });
+
+  it("maps quit-club alias to leaveClub", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { club_id: 42, user_id: "900000143", left: true } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await handleZapryAction({
+      action: "quit-club",
+      channel: "zapry",
+      account,
+      params: {
+        club_id: 42,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openapi.example.test/TOKEN/leaveClub",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          club_id: 42,
+        }),
+      }),
+    );
+  });
 });
 
 describe("feed actions", () => {
