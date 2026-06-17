@@ -18,8 +18,11 @@ function normalizeZapryApiBase(raw: string | undefined): string {
 }
 
 export function listZapryAccountIds(cfg: any): string[] {
-  const zapry = getZapryConfig(cfg);
-  if (!zapry) return [];
+  // Do NOT early-return when `channels.zapry` is missing: an env-only
+  // deployment (ZAPRY_BOT_TOKEN set, no config block) is still a valid
+  // single-account setup and must be visible to callers that ask
+  // "is the Zapry plugin configured?".
+  const zapry = getZapryConfig(cfg) ?? {};
   if (zapry.accounts && Object.keys(zapry.accounts).length > 0) {
     return Object.keys(zapry.accounts);
   }
